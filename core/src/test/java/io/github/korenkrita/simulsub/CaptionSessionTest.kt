@@ -57,6 +57,7 @@ class CaptionSessionTest {
         override val jevOn = false
         override val jevCheck = false
         override val keepLogs = false
+        @Volatile override var keepTranscript = false
         override val keepSentences = CaptionBoard.DEFAULT_SENTENCES
         override val keepChars = CaptionBoard.DEFAULT_CHARS
         override val finalOnly = false
@@ -180,9 +181,23 @@ class CaptionSessionTest {
     @Test
     fun audioThatEndsWithNothingToSayClosesTheSession() {
         val host = FakeHost(FakeAudio(1.5f, null))
+        host.prefs.keepTranscript = true
         host.post { CaptionSession(host).start() }
         assertTrue(host.finished.await(20, TimeUnit.SECONDS))
         assertEquals(1L, host.ended.count)
+        assertTrue(host.released.await(5, TimeUnit.SECONDS))
+        assertEquals("a session with no sentence leaves no text", emptyList<File>(), Transcript.list(logs))
+    }
+
+    @Test
+    fun theTranscriptBeingWrittenIsNotDeleted() {
+        val t = Transcript.open(logs)
+        t.sentence(1, "テスト", "译文")
+        assertFalse(Transcript.delete(t.file)); assertTrue(t.file.isFile)
+        t.sentence(1, "again", "again") // a segment is written once
+        t.close()
+        assertEquals(1, t.file.readText().split("テスト").size - 1); assertFalse(t.file.readText().contains("again"))
+        assertTrue(Transcript.delete(t.file)); assertFalse(t.file.exists())
     }
 
     @Test
@@ -280,6 +295,7 @@ class CaptionSessionTest {
     fun aPauseFinishesTheSentenceDropsTheAudioAndAResumeGoesOn() {
         val audio = ScriptedAudio()
         val host = FakeHost(FakeAudio(0f, null), source = audio)
+        host.prefs.keepTranscript = true
         val s = CaptionSession(host)
         host.post { s.start() }
         fun finals() = host.lines.count { it.isFinal }
@@ -303,5 +319,10 @@ class CaptionSessionTest {
         host.settle(); assertFalse(host.diag.toString(), host.diag.orEmpty().contains("暂停"))
         host.post { s.stop() }
         assertTrue(host.released.await(10, TimeUnit.SECONDS))
+        // the text kept: both sentences, each with its time
+        val text = Transcript.list(logs).single().readText()
+        val body = text.lines().filter { it.isNotBlank() }.drop(1).map { if (Regex("\\d\\d:\\d\\d:\\d\\d").matches(it)) "T" else it }
+        assertTrue(text, text.startsWith("同传字幕 ") && text.lines()[0].endsWith(" 开始"))
+        assertEquals(text, listOf("T", "テスト", "译文", "T", "テスト", "译文"), body)
     }
 }

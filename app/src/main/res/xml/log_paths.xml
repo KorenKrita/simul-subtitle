@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only the session logs can be shared, never the models or settings. -->
+<!-- Only the session logs and the transcripts can be shared, never the models or settings. -->
 <paths>
     <external-files-path name="logs" path="logs/" />
+    <external-files-path name="transcripts" path="transcripts/" />
 </paths>

@@ -11,6 +11,8 @@ interface SessionPrefs {
     val jevOn: Boolean
     val jevCheck: Boolean
     val keepLogs: Boolean
+    /** the finished sentences are kept as plain text ([Transcript]) */
+    val keepTranscript: Boolean
     val keepSentences: Int
     val keepChars: Int
     val finalOnly: Boolean
@@ -162,6 +164,9 @@ class CaptionSession(private val host: SessionHost) {
     /** this session has a Jev judge: the segmenter asks it at sentence ends */
     @Volatile private var jevActive = false
     @Volatile private var logWarned = false
+    /** the finished sentences as text, when kept; written by the pipeline's thread, closed by the session thread */
+    @Volatile private var transcript: Transcript? = null
+    @Volatile private var transcriptFailed = false
 
     @Volatile private var status = "正在准备…"
     /** the session ended by itself (overload, error, capture lost): the window stays with its last message */
@@ -183,11 +188,11 @@ class CaptionSession(private val host: SessionHost) {
     fun start() {
         refresh()
         // fixed at the start: switching it while models load affects the next session, as the switch says
-        val keepLogs = prefs.keepLogs
-        Thread({ session(keepLogs) }, "jpsub-session").start()
+        val keepLogs = prefs.keepLogs; val keepTranscript = prefs.keepTranscript
+        Thread({ session(keepLogs, keepTranscript) }, "jpsub-session").start()
     }
 
-    private fun session(keepLogs: Boolean) {
+    private fun session(keepLogs: Boolean, keepTranscript: Boolean) {
         var models: SpeechModels? = null
         var log: SessionLog? = null
         var keepOverlay = false
@@ -219,6 +224,8 @@ class CaptionSession(private val host: SessionHost) {
             val sl = if (!keepLogs) null
                 else SessionLog(SessionLog.dir(host.logRoot), onFail = { host.logWarn("session log: $it"); logWarned = true; main.post { refresh() } })
             log = sl
+            if (keepTranscript) transcript = runCatching { Transcript.open(host.logRoot) }
+                .onFailure { host.logWarn("transcript", it); transcriptFailed = true; refresh() }.getOrNull()
             sl?.write(mapOf("ev" to "session_start", "app" to host.appVersion,
                 "jev_requested" to jevEnds, "jev_ends" to jevEnds, "jev_check" to jevCheck, "final_only" to prefs.finalOnly,
                 "mt_engine" to "byok",
@@ -488,6 +495,7 @@ class CaptionSession(private val host: SessionHost) {
         } finally {
             // the pipeline workers have exited (or never started), so this is the last event
             log?.let { it.write(mapOf("ev" to "session_end", "overloaded" to overloaded)); it.close() } // failure → onFail
+            transcript?.close(); transcript = null
             // Detach the pipeline under the same lock stop uses; the native free happens outside it.
             synchronized(cancelLock) { pipeline = null }
             models?.release()
@@ -564,6 +572,8 @@ class CaptionSession(private val host: SessionHost) {
     }
 
     private fun onCaption(c: Caption, log: SessionLog?) {
+        // a failed translation is kept as shown ("[翻译失败] …"); a segment with nothing to show is not a sentence
+        if (c.isFinal && c.zh.isNotEmpty()) transcript?.sentence(c.segmentId, c.ja, c.zh)
         val t = c.timing
         // timings only: the text of what was said stays out of logcat (it goes to the session log when that is on)
         host.logInfo("seg=${c.segmentId}.${c.revision}${if (c.isFinal) "F" else "d"} audio=${t.audioMs} wait=${t.segmentWaitMs} " +
@@ -593,6 +603,7 @@ class CaptionSession(private val host: SessionHost) {
             if (paused && status.isEmpty() && lines.isNotEmpty()) append("⏸ 已暂停")
             if (notice.isNotEmpty()) append("${if (isNotEmpty()) "  ·  " else ""}$notice")
             if (logWarned) append("${if (isNotEmpty()) "  ·  " else ""}⚠ 日志写入失败，本次日志不完整")
+            if (transcriptFailed || transcript?.failed == true) append("${if (isNotEmpty()) "  ·  " else ""}⚠ 字幕文本保存失败，本次文本不完整")
             // a failing service stays shown, also with timings off; one that works says nothing here
             serviceWarning(mtState, jevNow(), jevEndsOn, jevCheckOn, host.clock(), System.currentTimeMillis())?.let {
                 append("${if (isNotEmpty()) "  ·  " else ""}$it")

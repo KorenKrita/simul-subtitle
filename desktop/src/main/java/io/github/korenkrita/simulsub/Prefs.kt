@@ -86,6 +86,7 @@ class Prefs internal constructor(private val file: File) : SessionPrefs {
     override var jevCheck: Boolean get() = bool("jevCheck", false); set(v) = put("jevCheck" to v)
     override var dedupeJoin: Boolean get() = bool("dedupeJoin", false); set(v) = put("dedupeJoin" to v)
     override var keepLogs: Boolean get() = bool("keepLogs", false); set(v) = put("keepLogs" to v)
+    override var keepTranscript: Boolean get() = bool("keepTranscript", true); set(v) = put("keepTranscript" to v)
     override var contextOn: Boolean get() = bool("contextOn", true); set(v) = put("contextOn" to v)
     override var contextSentences: Int
         get() = int("contextSentences", Pipeline.PREVIOUS_SENTENCES).coerceIn(1, Pipeline.MAX_PREVIOUS_SENTENCES)

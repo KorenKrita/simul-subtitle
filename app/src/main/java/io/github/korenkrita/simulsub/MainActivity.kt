@@ -455,6 +455,7 @@ class MainActivity : Activity() {
         syncMode()
         prefs.listen(styleListener)
         renderPermissions()
+        renderTranscripts()
         renderLogs()
         render()
         main.post(ticker)
@@ -485,6 +486,8 @@ class MainActivity : Activity() {
             // a session started or finished (its .part renamed): the list must not keep buttons for files that moved
             val now = SessionLog.list(getExternalFilesDir(null)!!).map { it.name } to SessionLog.activeFiles()
             if (now != listedLogs) renderLogs()
+            val ts = Transcript.list(getExternalFilesDir(null)!!)
+            if (ts.map { it.name } to ts.firstOrNull { Transcript.isWriting(it) } != listedTranscripts) renderTranscripts()
             main.postDelayed(this, 800)
         }
     }
@@ -1186,6 +1189,127 @@ class MainActivity : Activity() {
             })
         })
     }
+
+    // ---- transcripts ---------------------------------------------------------------------------------------
+
+    private fun renderTranscripts() {
+        val box = findViewById<LinearLayout>(R.id.transcriptList)
+        box.removeAllViews()
+        val root = getExternalFilesDir(null)!!
+        val files = Transcript.list(root)
+        listedTranscripts = files.map { it.name } to files.firstOrNull { Transcript.isWriting(it) }
+        val dp = resources.displayMetrics.density
+        switchRow(box, "保存字幕文本", "每句说完定稿的原文和译文，按时间存成一份纯文本，可以在这里查看或分享。和下面的「记录每次使用」无关。从下次开始字幕起生效。",
+            prefs.keepTranscript) { prefs.keepTranscript = it; renderTranscripts() }
+        if (files.isEmpty()) {
+            box.addView(TextView(this).apply {
+                text = if (prefs.keepTranscript) "还没有字幕文本。" else "还没有字幕文本。现在不保存，打开上面的开关后才会保存。"
+                textSize = 15f; setTextColor(getColor(R.color.text2))
+                setPadding(0, (8 * dp).toInt(), 0, (8 * dp).toInt())
+            })
+            return
+        }
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        for (f in files) {
+            val writing = Transcript.isWriting(f)
+            val title = transcriptTitle(f)
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
+            }
+            val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            texts.addView(TextView(this).apply { text = title; textSize = 16f; setTextColor(getColor(R.color.text)) })
+            texts.addView(TextView(this).apply {
+                text = "%.1f KB".format(f.length() / 1024.0) + if (writing) " · 正在保存" else ""
+                textSize = 13.5f; setTextColor(getColor(R.color.text2))
+            })
+            row.addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                text = "删除"; setTextColor(getColor(R.color.err)); isEnabled = !writing
+                minWidth = 0; minimumWidth = 0; setPadding((10 * dp).toInt(), 0, (10 * dp).toInt(), 0)
+                setOnClickListener { confirmDelete("删除 $title 的字幕文本？", "删除后不能恢复。") {
+                    if (!Transcript.delete(f)) Toast.makeText(this@MainActivity, "删除失败：正在保存或文件被占用", Toast.LENGTH_SHORT).show()
+                    renderTranscripts()
+                } }
+            })
+            row.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = "查看"; setOnClickListener { showTranscript(f) }
+            })
+            rows.addView(row)
+        }
+        if (files.size > LOGS_BEFORE_SCROLL) {
+            val scroller = object : android.widget.ScrollView(this) {
+                // the page is a ScrollView too: keep the gesture in this list while it can scroll
+                override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+                    parent.requestDisallowInterceptTouchEvent(canScrollVertically(1) || canScrollVertically(-1))
+                    return super.onTouchEvent(e)
+                }
+                override fun onInterceptTouchEvent(e: android.view.MotionEvent): Boolean {
+                    if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN) parent.requestDisallowInterceptTouchEvent(true)
+                    return super.onInterceptTouchEvent(e)
+                }
+            }.apply { isVerticalScrollBarEnabled = true; isScrollbarFadingEnabled = false; addView(rows) }
+            box.addView(scroller, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (LOGS_BEFORE_SCROLL * 58 * dp + 28 * dp).toInt()))
+        } else box.addView(rows)
+        val deletable = files.count { !Transcript.isWriting(it) }
+        box.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (6 * dp).toInt(), 0, 0)
+            addView(TextView(this@MainActivity).apply {
+                text = "共 ${files.size} 份，" + files.sumOf { it.length() }.let { if (it < 1048576) "%.1f KB".format(it / 1024.0) else "%.1f MB".format(it / 1048576.0) }
+                textSize = 12.5f; setTextColor(getColor(R.color.text2))
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(MaterialButton(this@MainActivity, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+                text = "全部清空"; setTextColor(getColor(R.color.err)); isEnabled = deletable > 0
+                setOnClickListener { confirmDelete("删除全部 $deletable 份字幕文本？", "正在保存的不会删除。删除后不能恢复。") {
+                    val left = Transcript.deleteAll(root)
+                    if (left > 0) Toast.makeText(this@MainActivity, "还剩 $left 份（正在保存或无法删除）", Toast.LENGTH_SHORT).show()
+                    renderTranscripts()
+                } }
+            })
+        })
+    }
+
+    /** 同传字幕-20261021-140312[-1].txt → 2026-10-21 14:03:12 */
+    private fun transcriptTitle(f: java.io.File): String {
+        val n = f.name.removePrefix("同传字幕-").removeSuffix(".txt")
+        return if (n.length >= 15) "${n.substring(0, 4)}-${n.substring(4, 6)}-${n.substring(6, 8)} ${n.substring(9, 11)}:${n.substring(11, 13)}:${n.substring(13, 15)}${n.substring(15)}" else f.name
+    }
+
+    /** The text in a dialog, selectable; one being written shows what it has so far. */
+    private fun showTranscript(f: java.io.File) {
+        val text = runCatching { f.readText() }.getOrElse {
+            Toast.makeText(this, "这份字幕文本已经不在了", Toast.LENGTH_SHORT).show(); renderTranscripts(); return
+        }
+        val dp = resources.displayMetrics.density
+        val view = android.widget.ScrollView(this).apply {
+            addView(TextView(this@MainActivity).apply {
+                this.text = text; textSize = 15f; setTextColor(getColor(R.color.text)); setTextIsSelectable(true)
+                setLineSpacing(0f, 1.15f)
+                setPadding((22 * dp).toInt(), (8 * dp).toInt(), (22 * dp).toInt(), (8 * dp).toInt())
+            })
+        }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(transcriptTitle(f))
+            .setView(view)
+            .setNegativeButton("关闭", null)
+            .setPositiveButton("分享") { _, _ -> shareTranscript(f) }
+            .show()
+    }
+
+    private fun shareTranscript(f: java.io.File) {
+        if (!f.isFile) { Toast.makeText(this, "这份字幕文本已经不在了", Toast.LENGTH_SHORT).show(); renderTranscripts(); return }
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.logs", f)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, f.name)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "分享 ${f.name}"))
+    }
+
+    private var listedTranscripts: Pair<List<String>, java.io.File?>? = null
 
     private fun confirmDelete(title: String, msg: String, ok: () -> Unit) {
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this)

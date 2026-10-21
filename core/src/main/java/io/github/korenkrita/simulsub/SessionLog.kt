@@ -133,3 +133,71 @@ class SessionLog(
         fun deleteAll(root: File): Int = synchronized(NAMES) { list(root).count { !delete(it) } }
     }
 }
+
+/**
+ * The finished sentences of one session as plain text, the source and its translation, for reading and sharing. Kept
+ * apart from [SessionLog]: its own switch, nothing for debugging, and never renamed, so it can be read or shared while
+ * it is written. A session that finished no sentence leaves no file. A failed write stops it ([failed]).
+ */
+class Transcript private constructor(val file: File, private val out: Writer) {
+    private val clock = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    private var sentences = 0
+    private var lastSeg = -1L
+    @Volatile var failed = false; private set
+
+    /** One finished sentence; a segment is written once. Any thread. */
+    @Synchronized fun sentence(seg: Long, source: String, translation: String) {
+        if (seg <= lastSeg) return
+        lastSeg = seg
+        if (put("${clock.format(Date())}\n$source\n$translation\n\n")) sentences++
+    }
+
+
+    private fun put(s: String): Boolean {
+        if (failed) return false
+        try { out.write(s); out.flush(); return true } catch (_: java.io.IOException) { failed = true; return false }
+    }
+
+    @Synchronized fun close() {
+        runCatching { out.close() }
+        synchronized(NAMES) {
+            if (writing == file) writing = null
+            if (sentences == 0) file.delete()
+        }
+    }
+
+    companion object {
+        private val NAMES = Any()
+        /** the file a running session writes: not deleted under it */
+        private var writing: File? = null
+        fun dir(root: File) = File(root, "transcripts")
+
+        /** @throws java.io.IOException when the file cannot be made */
+        fun open(root: File, startedAt: Date = Date()): Transcript {
+            val dir = dir(root).apply { mkdirs() }
+            val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(startedAt)
+            val f = synchronized(NAMES) {
+                var i = 0
+                var f: File
+                while (true) {
+                    f = File(dir, "同传字幕-$ts${if (i == 0) "" else "-$i"}.txt")
+                    if (f.createNewFile()) break
+                    i++
+                }
+                f.also { writing = it }
+            }
+            val out = try { f.bufferedWriter() } catch (e: java.io.IOException) { synchronized(NAMES) { writing = null; f.delete() }; throw e }
+            val head = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(startedAt)
+            return Transcript(f, out).also { it.put("同传字幕 $head 开始\n\n") }
+        }
+
+        /** Newest first. */
+        fun list(root: File): List<File> =
+            dir(root).listFiles { f -> f.name.endsWith(".txt") }?.sortedByDescending { it.name } ?: emptyList()
+        fun isWriting(f: File) = synchronized(NAMES) { f == writing }
+        /** @return true if it is gone; false for the file a session is writing */
+        fun delete(f: File): Boolean = synchronized(NAMES) { f != writing && (f.delete() || !f.exists()) }
+        /** @return how many are left (being written or undeletable) */
+        fun deleteAll(root: File): Int = list(root).count { !delete(it) }
+    }
+}

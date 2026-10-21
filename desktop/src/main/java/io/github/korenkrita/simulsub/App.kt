@@ -757,6 +757,50 @@ private fun PageTab() {
 private fun LogsTab() {
     var tick by remember { mutableIntStateOf(0) } // relists after a change, and every few seconds (a session may end)
     LaunchedEffect(Unit) { while (true) { delay(3_000); tick++ } }
+    Group("字幕文本") {
+        SwitchRow("保存字幕文本", "每句说完定稿的原文和译文，按时间存成一份纯文本，可以打开查看、另存或发给别人。和下面的「记录每次使用」无关。从下次开始字幕起生效。",
+            prefs.keepTranscript) { prefs.keepTranscript = it }
+        tick.let { }
+        val files = Transcript.list(dataDir)
+        var confirm by remember { mutableStateOf<File?>(null) }
+        var confirmAll by remember { mutableStateOf(false) }
+        var msg by remember { mutableStateOf<String?>(null) }
+        if (files.isEmpty()) Hint(if (prefs.keepTranscript) "还没有字幕文本。" else "还没有字幕文本。现在不保存，打开上面的开关后才会保存。")
+        for (f in files) {
+            Divider()
+            val writing = Transcript.isWriting(f)
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(f.name.removeSuffix(".txt"), fontSize = 14.sp)
+                    Text(sizeText(f.length()) + if (writing) " · 正在保存" else "", fontSize = 12.sp, color = C.muted)
+                }
+                if (confirm == f) {
+                    TextBtn("取消") { confirm = null }
+                    TextBtn("删除", danger = true) { confirm = null; if (!Transcript.delete(f)) msg = "删除失败：正在保存或文件被占用"; tick++ }
+                } else {
+                    TextBtn("删除", enabled = !writing) { confirm = f }
+                    TextBtn(if (isWindows) "在文件夹中显示" else "在访达中显示") { reveal(f) }
+                    TextBtn("打开") { if (runCatching { Desktop.getDesktop().open(f) }.isFailure) msg = "打不开：文件已经不在了，或系统没有能打开 .txt 的程序" }
+                }
+            }
+        }
+        msg?.let { Hint(it, C.err) }
+        if (files.isNotEmpty()) {
+            Divider()
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("共 ${files.size} 份，${sizeText(files.sumOf { it.length() })}", fontSize = 13.sp, color = C.muted)
+                Grow()
+                if (confirmAll) {
+                    TextBtn("取消") { confirmAll = false }
+                    TextBtn("删除全部（正在保存的不删）", danger = true) {
+                        confirmAll = false
+                        val left = Transcript.deleteAll(dataDir)
+                        msg = if (left > 0) "还剩 $left 份（正在保存或无法删除）" else null; tick++
+                    }
+                } else TextBtn("全部清空", danger = true) { confirmAll = true }
+            }
+        }
+    }
     Group("使用记录") {
         SwitchRow("记录每次使用", "打开后，每次开始字幕会在电脑上留一份文字记录：识别结果、翻译的提示词和译文、在线 Decisions 模型辅助的请求和回答，不含声音和 key。只有你自己发出去才会离开电脑，出问题时可以发给开发者帮助排查。从下次开始字幕起生效。",
             prefs.keepLogs) { prefs.keepLogs = it }

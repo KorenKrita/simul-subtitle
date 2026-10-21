@@ -48,6 +48,7 @@
 | `Translation.kt` | 翻译提示词构建（面向前缀缓存排布）、场景与术语表管理、支持语言列表、BYOK 流式客户端与关闭思考参数自动探测 |
 | `Jev.kt` | TypeSafe Jev 客户端及「句尾是否说完」「译文是否译错」两个结构化判断定义 |
 | `SessionLog.kt` | 会话使用记录（JSONL）后台异步写入，采用 `.part` 临时文件并在正常结束时原子转正 |
+| `SessionLog.kt` 里的 `Transcript` | 字幕文本：每句定稿的原文和译文写成纯文本（`transcripts/`），独立开关；不改名，写入中也能查看、分享 |
 | `ServiceStatus.kt` | 运行时状态与错误提示定义 |
 | `SetupOrder.kt` | 首次启动与配置引导顺序判定 |
 
