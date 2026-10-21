@@ -199,7 +199,8 @@ private fun Home(startError: String?, setStartError: (String?) -> Unit, openTran
         val ready = prefs.byokReady
         when {
             running && ended -> status(C.warn, "字幕已经停了", "原因写在字幕框里。点下面的按钮关掉它，然后可以重新开始。")
-            running -> status(C.ok, "字幕正在显示", "回到你要看的视频或直播就行。\n点一下字幕，可以调大小或停止；关掉这个窗口字幕也会继续，${if (isWindows) "任务栏右下角" else "菜单栏"}的图标里可以停止。")
+            running && paused -> status(C.warn, "字幕已暂停", "声音不再识别，字幕窗口保留。点「继续字幕」接着出字幕。")
+            running -> status(C.ok, "字幕正在显示", "回到你要看的视频或直播就行。\n点一下字幕，可以调大小、暂停或停止；关掉这个窗口字幕也会继续，${if (isWindows) "任务栏右下角" else "菜单栏"}的图标里可以停止。")
             !ready -> status(C.warn, "先填翻译用的 LLM API", "填好服务地址、模型 ID 和 API Key，点「测试连接」，就能开始。声音识别已经装在 App 里，不用下载。")
             startError != null -> status(C.err, "还不能开始", startError)
             else -> status(C.brand, "可以开始了", "点下面的按钮开始。" + if (isWindows) "" else "第一次会问你是否允许同传字幕录制系统声音，请选「允许」。")
