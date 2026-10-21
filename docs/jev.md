@@ -39,7 +39,7 @@
 
 ### 自定义服务
 
-1. 在「在线 Decisions 模型辅助」里选「自定义」。
+1. 在「在线 Decisions 模型辅助」里打开「智能断句」或「检查译文」（两个都关时不显示服务选择），再在服务下拉里选「自定义」。
 2. 选协议：
    - **TypeSafe System One**：路径 `/v1/systemone`，TypeSafe 官方、OpenRouter 和 CLIProxyAPI 都支持。
    - **OpenRouter Decisions**：路径 `/alpha/decisions`，OpenRouter 的 Decisions API。
@@ -57,7 +57,7 @@
 
 两种协议的请求和回答格式相同，App 按同一种方式解析。Decisions API 的「检查译文」回答里可以没有 `confidence`，这时取所选类别的概率。
 
-- **数据与隐私**：仅向 Jev 发送本地识别出的**原文文本**与**译文文本**，不发送音频。API Key 在 Android 存入 Keystore、macOS 存入钥匙串、Windows 经 DPAPI 加密，且不写入使用记录。
+- **数据与隐私**：仅向 Jev 发送本地识别出的**原文文本**与**译文文本**，不发送音频；自定义服务点「测试连接」时发送一句固定的测试日语。API Key 在 Android 存入 Keystore、macOS 存入钥匙串、Windows 经 DPAPI 加密，且不写入使用记录。
 - **无感降级**：任何 Jev 请求超时、限流或网络失败，都会自动退回未开启 Jev 时的默认行为（按静音停顿断句、直接保留原译文），不会中断字幕。
 
 ---
