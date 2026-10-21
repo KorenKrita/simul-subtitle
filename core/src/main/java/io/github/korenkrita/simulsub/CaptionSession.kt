@@ -176,10 +176,13 @@ class CaptionSession(private val host: SessionHost) {
      * stay and a resume needs no reload. The sentence being spoken when it pauses is finished as it stands.
      */
     @Volatile var paused = false; private set
+    /** how many times it was paused: the capture thread sees a pause even if it is over by its next frame */
+    private val pauses = java.util.concurrent.atomic.AtomicInteger()
 
     /** UI thread. */
     fun setPaused(p: Boolean) {
         if (paused == p) return
+        if (p) pauses.incrementAndGet()
         paused = p
         refresh()
     }
@@ -535,15 +538,15 @@ class CaptionSession(private val host: SessionHost) {
             var statSq = 0.0; var statN = 0; var statMaxP = 0f
             var first = true
             var wasPaused = false
+            var pausesSeen = 0
             while (!stopping && !overloaded && !failed) {
                 val capturedAt = src.read(frame)
                 if (capturedAt < 0) break // stopped, or the audio ended by itself
                 if (first) { first = false; setStatus("") } // audio arrives: the capture is running
-                if (paused != wasPaused) {
-                    wasPaused = paused
-                    if (wasPaused) seg.flush()
-                    log?.write(mapOf("ev" to if (wasPaused) "pause" else "resume"))
-                }
+                // counted, not only read: a pause and resume between two frames (a read may wait) still ends the sentence
+                val n = pauses.get()
+                if (n != pausesSeen) { pausesSeen = n; seg.flush(); log?.write(mapOf("ev" to "pause")); wasPaused = true }
+                if (paused != wasPaused) { wasPaused = paused; log?.write(mapOf("ev" to if (wasPaused) "pause" else "resume")) }
                 if (wasPaused) continue
                 val f = frame.copyOf()
                 framesRead += f.size

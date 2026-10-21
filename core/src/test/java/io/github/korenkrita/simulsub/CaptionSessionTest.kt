@@ -198,6 +198,12 @@ class CaptionSessionTest {
         t.close()
         assertEquals(1, t.file.readText().split("テスト").size - 1); assertFalse(t.file.readText().contains("again"))
         assertTrue(Transcript.delete(t.file)); assertFalse(t.file.exists())
+        // a stopped session may still be finishing when the next one opens its own: both stay protected
+        val a = Transcript.open(logs); val b = Transcript.open(logs)
+        assertFalse(Transcript.delete(a.file)); assertFalse(Transcript.delete(b.file))
+        a.sentence(1, "テスト", "译文"); a.close()
+        assertFalse(Transcript.delete(b.file)); assertTrue(Transcript.delete(a.file))
+        b.close()
     }
 
     @Test
@@ -289,6 +295,24 @@ class CaptionSessionTest {
         override fun endReason(): String? = null
         override fun close() {}
         override fun cancel() = q.put(end)
+    }
+
+    @Test
+    fun aPauseOverBeforeTheNextFrameStillEndsTheSentence() {
+        // no audio arrives while paused (the read waits): the pause and resume both happen between two frames
+        val audio = ScriptedAudio()
+        val host = FakeHost(FakeAudio(0f, null), source = audio)
+        val s = CaptionSession(host)
+        host.post { s.start() }
+        audio.push(false, 512); audio.push(true, 800); audio.drained()
+        host.post { s.setPaused(true) }; host.post { s.setPaused(false) }; host.settle()
+        audio.push(true, 800); audio.push(false, 2000)
+        val t0 = monoMs()
+        while (host.lines.count { it.isFinal } < 2 && monoMs() - t0 < 10_000) Thread.sleep(20)
+        // the speech before the pause and after it are two sentences, not one
+        assertEquals(2, host.lines.count { it.isFinal })
+        host.post { s.stop() }
+        assertTrue(host.released.await(10, TimeUnit.SECONDS))
     }
 
     @Test

@@ -161,15 +161,15 @@ class Transcript private constructor(val file: File, private val out: Writer) {
     @Synchronized fun close() {
         runCatching { out.close() }
         synchronized(NAMES) {
-            if (writing == file) writing = null
+            writing.remove(file)
             if (sentences == 0) file.delete()
         }
     }
 
     companion object {
         private val NAMES = Any()
-        /** the file a running session writes: not deleted under it */
-        private var writing: File? = null
+        /** the files running sessions write (a stopped one may still be finishing as the next starts): not deleted */
+        private val writing = HashSet<File>()
         fun dir(root: File) = File(root, "transcripts")
 
         /** @throws java.io.IOException when the file cannot be made */
@@ -184,9 +184,9 @@ class Transcript private constructor(val file: File, private val out: Writer) {
                     if (f.createNewFile()) break
                     i++
                 }
-                f.also { writing = it }
+                f.also { writing.add(it) }
             }
-            val out = try { f.bufferedWriter() } catch (e: java.io.IOException) { synchronized(NAMES) { writing = null; f.delete() }; throw e }
+            val out = try { f.bufferedWriter() } catch (e: java.io.IOException) { synchronized(NAMES) { writing.remove(f); f.delete() }; throw e }
             val head = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(startedAt)
             return Transcript(f, out).also { it.put("同传字幕 $head 开始\n\n") }
         }
@@ -194,9 +194,9 @@ class Transcript private constructor(val file: File, private val out: Writer) {
         /** Newest first. */
         fun list(root: File): List<File> =
             dir(root).listFiles { f -> f.name.endsWith(".txt") }?.sortedByDescending { it.name } ?: emptyList()
-        fun isWriting(f: File) = synchronized(NAMES) { f == writing }
+        fun isWriting(f: File) = synchronized(NAMES) { f in writing }
         /** @return true if it is gone; false for the file a session is writing */
-        fun delete(f: File): Boolean = synchronized(NAMES) { f != writing && (f.delete() || !f.exists()) }
+        fun delete(f: File): Boolean = synchronized(NAMES) { f !in writing && (f.delete() || !f.exists()) }
         /** @return how many are left (being written or undeletable) */
         fun deleteAll(root: File): Int = list(root).count { !delete(it) }
     }

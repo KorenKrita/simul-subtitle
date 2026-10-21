@@ -795,6 +795,20 @@ class PipelineTest {
     }
 
     @Test
+    fun aDraftOfOnlyPunctuationIsNotShown() {
+        // a draft has nothing to replace: one with an empty translation would be an empty line on screen
+        val mt = FakeMt(1); val out = Collections.synchronizedList(ArrayList<Caption>()); val done = CountDownLatch(1)
+        val asr = object : Asr { override fun recognize(samples: FloatArray) = if (samples.size == 20) "。" else "ja${samples.size}" }
+        val p = Pipeline(asr, mt, { out.add(it); if (it.isFinal) done.countDown() })
+        p.start()
+        p.submit(job(1, 1, false, 20)); Thread.sleep(200)
+        p.submit(job(1, 2, true, 30))
+        assertTrue(done.await(2, TimeUnit.SECONDS)); p.stop(); p.awaitStopped()
+        assertTrue(out.map { it.ja to it.zh }.toString(), out.none { !it.isFinal })
+        assertEquals(1, mt.calls.size)
+    }
+
+    @Test
     fun onlyTheLastTwoSentencesAreContextAndALateRetryKeepsItsOwn() {
         // segment 1's check is held while 2..11 are translated (far enough to have evicted an old per-segment
         // context store); its retry must still have no context, as its first translation had none

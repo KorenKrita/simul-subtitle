@@ -362,7 +362,9 @@ fun generateTerms(service: ByokService, stored: String?, remember: (String) -> U
             else -> steps.lastOrNull()?.result?.let { if (it.stop == 'f') return null to ByokTranslator.why(it) }
         }
     }
-    val t = ByokTranslator(service, termsSystem(label, background, have, n, source, target), variant,
+    // the switch's params only: its system note asks for a translation, which a term list is not
+    val t = ByokTranslator(service, termsSystem(label, background, have, n, source, target),
+        variant?.let { ByokTranslator.ThinkingOff(it.name, it.label, it.params) },
         deadlineMs = 60_000, maxTokens = 40 * n + 200, firstContentMs = 30_000)
     val r = t.translate("列出术语。") ?: return null to "没有收到回复"
     if (r.stop == 'f' && r.text.isEmpty()) return null to when {
@@ -650,8 +652,11 @@ class ByokTranslator(
         const val PROBE_TEXT = "こんにちは、今日もよろしくお願いします。"
         /** think tags, for a tag split over stream chunks */
         private val TAGS = listOf("<think>", "</think>", "<|channel>thought", "<channel|>")
-        /** Stored instead of a variant when the service answered but every switch still thought: do not probe again. */
-        const val NONE_WORKED = "-"
+        /**
+         * Stored instead of a variant when the service answered but every switch still thought: do not probe again.
+         * It names how many switches were tried, so a service none worked for is tried again once more are known.
+         */
+        val NONE_WORKED get() = "-${THINKING_OFF.size}"
         /** Sent when the user set none: "SimulSub/<version>", set by each app at start. */
         @Volatile var defaultUserAgent = "SimulSub"
 
@@ -689,12 +694,15 @@ class ByokTranslator(
             // Gemma 4 (e.g. on Gemini's OpenAI endpoint): no "none", only minimal or high, and minimal still lets it think
             // now and then, so the system message asks it not to as well
             ThinkingOff("minimal", "reasoning_effort: minimal + 提示词", mapOf("reasoning_effort" to "minimal"),
-                "CRITICAL: Do not use <|think|>, do not output any reasoning steps, and do not think. " +
+                // not the think token itself: a self-hosted server may read it in the text as the token, which turns thinking on
+                "CRITICAL: Do not think and do not output any reasoning steps. " +
                     "Directly output the translation result only.\n直接输出翻译结果，禁止输出任何思考过程与推理说明。"),
             // the model may not think at all: nothing extra
             ThinkingOff("none", "不加参数", emptyMap()),
         )
         fun variant(name: String?) = THINKING_OFF.firstOrNull { it.name == name }
+        /** A stored probe result that still holds; null (never tested) for one from an older list of switches. */
+        fun current(stored: String?) = stored?.takeIf { it == NONE_WORKED || variant(it) != null }
 
         /**
          * The chat completions URL for what the user typed: http or https (any other scheme is refused), no user info,

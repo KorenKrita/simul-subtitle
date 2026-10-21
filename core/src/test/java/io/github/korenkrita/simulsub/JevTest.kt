@@ -543,10 +543,32 @@ class JevTest {
         val v = byok().probe(steps)
         assertEquals("minimal", v?.name)
         val sys = ((Json.parse(lastBody.get()!!) as Map<*, *>)["messages"] as List<*>).let { (it[0] as Map<*, *>)["content"] as String }
-        assertTrue(sys, sys.startsWith("SYS\n\nCRITICAL: Do not use <|think|>") && sys.endsWith("禁止输出任何思考过程与推理说明。"))
+        assertTrue(sys, sys.startsWith("SYS\n\nCRITICAL: Do not think") && sys.endsWith("禁止输出任何思考过程与推理说明。"))
+        assertFalse(sys, sys.contains("<|think|>")) // Gemma's own token would turn thinking on where it is parsed
         // the other switches do not touch the system message
         byok(ByokTranslator.variant("effort")).translate("x")
         assertEquals("SYS", ((Json.parse(lastBody.get()!!) as Map<*, *>)["messages"] as List<*>).let { (it[0] as Map<*, *>)["content"] })
+    }
+
+    @Test
+    fun aServiceNoSwitchWorkedForIsTriedAgainOnceThereAreMore() {
+        // stored before the minimal switch existed ("-"): never tested now, so the probe runs and can find it
+        assertEquals(null, ByokTranslator.current("-"))
+        assertEquals(null, ByokTranslator.current("no-such-switch"))
+        assertEquals("-${ByokTranslator.THINKING_OFF.size}", ByokTranslator.current(ByokTranslator.NONE_WORKED))
+        assertEquals("minimal", ByokTranslator.current("minimal"))
+    }
+
+    @Test
+    fun generatingTermsUsesTheMinimalSwitchWithoutItsTranslationLine() {
+        reply = { 200 to sse("""{"choices":[{"delta":{"content":"配信→直播"},"finish_reason":"stop"}]}""") }
+        val (got, err) = generateTerms(ByokService("http://127.0.0.1:$port/v1/chat/completions", "m-1", "sk-test"), "minimal", {},
+            "测试", "", emptySet(), 5, Lang.JA, Target.ZH)
+        assertEquals(err, listOf("配信" to "直播"), got)
+        val b = Json.parse(lastBody.get()!!) as Map<*, *>
+        assertEquals("minimal", b["reasoning_effort"])
+        val sys = ((b["messages"] as List<*>)[0] as Map<*, *>)["content"] as String
+        assertFalse(sys, sys.contains("CRITICAL") || sys.contains("直接输出翻译结果"))
     }
 
     @Test

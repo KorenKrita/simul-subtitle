@@ -171,7 +171,7 @@ class Prefs internal constructor(private val file: File) : SessionPrefs {
         ByokService(url, str("byokModel$s") ?: "", Keychain.get("byokKey$s").orEmpty(), str("byokUserAgent$s") ?: "",
             ByokService.parseHeaders(Keychain.get("byokHeaders$s")))
     }
-    override fun byokVariant(url: String, model: String): String? = str("byokVariant:$url|$model")
+    override fun byokVariant(url: String, model: String): String? = ByokTranslator.current(str("byokVariant:$url|$model"))
     override fun setByokVariant(url: String, model: String, name: String?) = put("byokVariant:$url|$model" to name)
     /** address and model are there (the key may be left empty, for a free service) */
     val byokReady: Boolean get() = ByokTranslator.chatUrl(byokUrl).second != null && byokModel.isNotEmpty()

@@ -202,7 +202,7 @@ class Prefs(ctx: Context) : SessionPrefs {
      * The [ByokTranslator.THINKING_OFF] variant (by name) that answered without reasoning for this exact service URL and
      * model; null = not found yet. Kept per URL + model, so switching back and forth does not probe again.
      */
-    override fun byokVariant(url: String, model: String): String? = sp.getString("byokVariant:$url|$model", null)
+    override fun byokVariant(url: String, model: String): String? = ByokTranslator.current(sp.getString("byokVariant:$url|$model", null))
     override fun setByokVariant(url: String, model: String, name: String?) =
         sp.edit().apply { if (name == null) remove("byokVariant:$url|$model") else putString("byokVariant:$url|$model", name) }.apply()
     /** URL and model are there and valid: BYOK can start (the key may be left empty, for a free service). */

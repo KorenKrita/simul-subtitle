@@ -479,13 +479,13 @@ class Pipeline(
                 // nothing recognised = nothing to wait for; otherwise ask, replacing an older question not yet sent.
                 // No judge in this segment's setup (key missing for now) or one the service limited: no question,
                 // the segmenter cuts at once as without Jev instead of waiting for an answer that never comes
-                if (ja.isEmpty() || setup.judge == null || setup.judge.paused() != null) hints[job.segmentId to job.revision] = false to -1
+                if (!hasText(ja) || setup.judge == null || setup.judge.paused() != null) hints[job.segmentId to job.revision] = false to -1
                 else pendingJudge.set(Triple(job, ja, setup))
             }
             synchronized(lock) {
                 // A draft that already ran is kept even if a newer draft is queued: on a slow phone every
                 // draft would otherwise be superseded before it reaches MT and nothing would be shown.
-                if (!q.job.isFinal && ja.isEmpty()) return@synchronized
+                if (!q.job.isFinal && !hasText(ja)) return@synchronized
                 // a sentence-end candidate was recognized for Jev; it is only translated if drafts are wanted now
                 if (!q.job.isFinal && !drafts()) return@synchronized
                 // A draft that barely grew since the one already sent would translate to nearly the same line: skip it
@@ -588,9 +588,11 @@ class Pipeline(
         if (rememberedSeg >= seg - 1) { contexts.keys.removeIf { it < seg - 8 }; contexts[seg] = now }
         return now
     }
+    /** Recognized text a translator can act on: a lone mark ("。" "…") is answered with commentary, not a translation. */
+    private fun hasText(s: String) = s.any { it.isLetterOrDigit() }
     private fun rememberFinal(seg: Long, ja: String) {
         if (seg > rememberedSeg) rememberedSeg = seg
-        if (ja.none { it.isLetterOrDigit() }) return
+        if (!hasText(ja)) return
         recentFinals.addLast(ja)
         while (recentFinals.size > MAX_PREVIOUS_SENTENCES) recentFinals.removeFirst() // a later setup may ask for more
     }
@@ -722,7 +724,7 @@ class Pipeline(
             val start = clock()
             val ctx = previousFor(job.segmentId, j.setup.previousSentences)
             // nothing to translate in a segment of only punctuation ("。" "…"): a translator answers it with commentary
-            val translatable = j.ja.any { it.isLetterOrDigit() }
+            val translatable = hasText(j.ja)
             val r = if (translatable) translate(job, j.setup, 1, j.ja, emptyList(), ctx) else null
             if (job.isFinal) rememberFinal(job.segmentId, j.ja) // context for the following segments, also when this one fails
             if (!running) return
