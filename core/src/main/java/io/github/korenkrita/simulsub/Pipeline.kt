@@ -590,7 +590,7 @@ class Pipeline(
     }
     private fun rememberFinal(seg: Long, ja: String) {
         if (seg > rememberedSeg) rememberedSeg = seg
-        if (ja.isBlank()) return
+        if (ja.none { it.isLetterOrDigit() }) return
         recentFinals.addLast(ja)
         while (recentFinals.size > MAX_PREVIOUS_SENTENCES) recentFinals.removeFirst() // a later setup may ask for more
     }
@@ -721,10 +721,12 @@ class Pipeline(
             val job = j.q.job
             val start = clock()
             val ctx = previousFor(job.segmentId, j.setup.previousSentences)
-            val r = if (j.ja.isEmpty()) null else translate(job, j.setup, 1, j.ja, emptyList(), ctx)
+            // nothing to translate in a segment of only punctuation ("。" "…"): a translator answers it with commentary
+            val translatable = j.ja.any { it.isLetterOrDigit() }
+            val r = if (translatable) translate(job, j.setup, 1, j.ja, emptyList(), ctx) else null
             if (job.isFinal) rememberFinal(job.segmentId, j.ja) // context for the following segments, also when this one fails
             if (!running) return
-            var zh = if (j.ja.isEmpty()) "" else r?.takeIf { it.usable }?.text
+            var zh = if (translatable) r?.takeIf { it.usable }?.text else ""
             if (zh == null) {
                 if (!job.isFinal) continue
                 zh = "[翻译失败] ${j.ja}"

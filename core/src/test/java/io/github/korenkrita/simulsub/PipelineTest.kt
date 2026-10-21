@@ -781,6 +781,20 @@ class PipelineTest {
     }
 
     @Test
+    fun aSegmentOfOnlyPunctuationIsNotTranslatedNorContext() {
+        // recognition may end a segment on a lone mark; a translator asked about "。" answers with commentary
+        val mt = FakeMt(1); val out = Collections.synchronizedList(ArrayList<Caption>()); val done = CountDownLatch(3)
+        val asr = object : Asr { override fun recognize(samples: FloatArray) = if (samples.size == 20) " 。…" else "ja${samples.size}" }
+        val p = Pipeline(asr, mt, { out.add(it); if (it.isFinal) done.countDown() })
+        p.start()
+        for ((s, n) in listOf(1L to 10, 2L to 20, 3L to 30)) p.submit(job(s, 1, true, n))
+        assertTrue(done.await(2, TimeUnit.SECONDS)); p.stop(); p.awaitStopped()
+        assertEquals(2, mt.calls.size)
+        assertTrue(mt.calls[1], mt.calls[1].startsWith(context("ja10")) && !mt.calls[1].contains("…"))
+        assertEquals("", out.single { it.isFinal && it.segmentId == 2L }.zh)
+    }
+
+    @Test
     fun onlyTheLastTwoSentencesAreContextAndALateRetryKeepsItsOwn() {
         // segment 1's check is held while 2..11 are translated (far enough to have evicted an old per-segment
         // context store); its retry must still have no context, as its first translation had none
