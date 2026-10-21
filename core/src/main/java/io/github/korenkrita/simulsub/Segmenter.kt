@@ -279,14 +279,16 @@ class Segmenter(
         heldRevision = -1
         val tail = frames.subList(count, frames.size).toList()
         frames.clear()
-        // A cut that leaves nothing behind ends the utterance: the next one starts with its first speech frame, and only
-        // then fixes its settings (a change made in the silence after a forced cut applies to it).
-        if (continueSpeech && tail.isNotEmpty()) {
+        // A cut that leaves no speech behind ends the utterance: the next one starts with its first speech frame, and only
+        // then fixes its settings (a change made in the silence after a forced cut applies to it). A tail of silence alone
+        // would only be waited out and sent to recognition as a segment of nothing.
+        if (continueSpeech && tail.any { it.speech }) {
             segmentId++; beginUtterance()
             revision = 0
             frames.addAll(tail)
             framesSinceDraft = 0
-            silentFrames = 0
+            // a forced cut lands in a pause, so the tail can end in silence: it counts towards the next pause
+            silentFrames = tail.takeLastWhile { !it.speech }.size
         } else {
             inSpeech = false
             preRoll.clear()
