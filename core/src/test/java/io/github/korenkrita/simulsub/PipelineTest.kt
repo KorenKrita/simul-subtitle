@@ -1732,7 +1732,8 @@ class PipelineTest {
         for (i in 1..12) { assertTrue(p.setSetup(Setup(FakeMt(1), version = i))); p.submit(job(1L + i, 1, true, 10 + i)) }
         // wait until the ASR thread has taken all of them (MT is still blocked on segment 1)
         val until = monoMs() + 2_000
-        while (monoMs() < until && asrSeen.none { it == 13L }) Thread.sleep(5)
+        // contains() takes the list's lock; iterating it unlocked while the ASR thread adds threw now and then
+        while (monoMs() < until && !asrSeen.contains(13L)) Thread.sleep(5)
         assertTrue(asrSeen.contains(13L))
         p.stop()
         assertEquals(0L, old.gate.count) // GateMt.cancel opens the gate
