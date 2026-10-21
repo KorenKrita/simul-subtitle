@@ -26,7 +26,7 @@
 
 ### 自动探测关闭思考参数
 
-各家服务商关闭思考的字段名称并不统一。首次使用某个「服务地址 + 模型 ID」组合时（点击「测试连接」或首次开始字幕），App 会用一句固定的日语依次尝试以下 6 种参数（每次最多等待 8 秒，均计为一次正常请求）：
+各家服务商关闭思考的字段名称并不统一。首次使用某个「服务地址 + 模型 ID」组合时（点击「测试连接」或首次开始字幕），App 会用一句固定的日语依次尝试以下 7 种参数（每次最多等待 8 秒，均计为一次正常请求）：
 
 | 探测顺序 | 请求体附加参数 | 常见适用服务 / 模型 |
 |---|---|---|
@@ -35,10 +35,11 @@
 | 3 | `enable_thinking: false` | SiliconFlow、阿里云百炼（通义千问）等 |
 | 4 | `reasoning: {"enabled": false}` | OpenRouter |
 | 5 | `reasoning_effort: "none"` | OpenAI 推理模型、Gemini 的 OpenAI 兼容接口 |
-| 6 | 不加额外参数 | 本身不带思考模式的常规对话模型 |
+| 6 | `reasoning_effort: "minimal"`，并在系统提示词末尾要求不思考、直接输出译文 | Gemma 4（如 Gemini 接口上的 `gemma-4-26b-a4b-it`）：只接受 minimal / high，minimal 下仍可能思考 |
+| 7 | 不加额外参数 | 本身不带思考模式的常规对话模型 |
 
 - **命中与缓存**：第一种**正常返回译文且未检测到思考内容**的参数会被记录下来，后续对该「地址 + 模型」的所有请求自动沿用（注：这代表该次响应未观测到思考输出，部分服务端也可能隐藏思考过程）。
-- **思考内容判定**：响应中包含 `reasoning_content` / `reasoning` 字段、正文出现 `<think>`，或 `usage.completion_tokens_details.reasoning_tokens > 0`，即视为仍开启了思考。
+- **思考内容判定**：响应中包含 `reasoning_content` / `reasoning` 字段、正文出现 `<think>` 或非空的 Gemma 思考通道 `<|channel>thought…<channel|>`，或 `usage.completion_tokens_details.reasoning_tokens > 0`，即视为仍开启了思考。这些标记包住的内容永远不会显示在字幕上；空的思考通道（Gemma 关闭思考时首包偶尔会带）不算思考。
 - **异常与回退处理**：
   - 参数不被服务端接受（如 HTTP 400）时自动尝试下一种。
   - 遇到 Key 错误（401 / 403）、地址或模型不存在（404）、限流（429）或网络不通时立即中止探测并报错。

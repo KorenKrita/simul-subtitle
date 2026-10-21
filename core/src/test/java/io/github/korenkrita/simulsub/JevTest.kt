@@ -533,6 +533,41 @@ class JevTest {
     }
 
     @Test
+    fun aGemmaLikeServiceGetsMinimalEffortAndTheNoThinkingLine() {
+        // Gemma 4 on Gemini's endpoint: unknown fields and effort "none" are refused, minimal is taken
+        reply = { _ ->
+            val b = lastBody.get()!!
+            if (b.contains("\"reasoning_effort\":\"minimal\"")) 200 to plain else 400 to """{"error":"invalid argument"}"""
+        }
+        val steps = mutableListOf<ByokTranslator.Step>()
+        val v = byok().probe(steps)
+        assertEquals("minimal", v?.name)
+        val sys = ((Json.parse(lastBody.get()!!) as Map<*, *>)["messages"] as List<*>).let { (it[0] as Map<*, *>)["content"] as String }
+        assertTrue(sys, sys.startsWith("SYS\n\nCRITICAL: Do not use <|think|>") && sys.endsWith("禁止输出任何思考过程与推理说明。"))
+        // the other switches do not touch the system message
+        byok(ByokTranslator.variant("effort")).translate("x")
+        assertEquals("SYS", ((Json.parse(lastBody.get()!!) as Map<*, *>)["messages"] as List<*>).let { (it[0] as Map<*, *>)["content"] })
+    }
+
+    @Test
+    fun aGemmaThoughtChannelIsNeverShownAndAnEmptyOneIsNoThought() {
+        // the empty channel a first chunk may carry even at minimal effort: the answer counts, not as thinking
+        pieces = listOf("data: " + """{"choices":[{"delta":{"content":"<|chan"}}]}""" + "\n\n" to 0L,
+            "data: " + """{"choices":[{"delta":{"content":"nel>thought<channel|>你好"},"finish_reason":"stop"}]}""" + "\n\ndata: [DONE]\n\n" to 0L)
+        val e = byok().translate("x")!!
+        assertTrue(e.error, e.usable); assertEquals("你好", e.text); assertFalse(e.thinking)
+        // a channel with thoughts in it: flagged, stripped
+        pieces = null
+        reply = { 200 to sse("""{"choices":[{"delta":{"content":"<|channel>thought想一下<channel|>你好"},"finish_reason":"stop"}]}""") }
+        val t = byok().translate("x")!!
+        assertEquals("你好", t.text); assertTrue(t.thinking)
+        // one that never closed is no answer
+        reply = { 200 to sse("""{"choices":[{"delta":{"content":"<|channel>thought想了很久"},"finish_reason":"length"}]}""") }
+        val u = byok().translate("x")!!
+        assertFalse(u.usable); assertEquals("", u.text); assertEquals("unfinished thinking", u.error)
+    }
+
+    @Test
     fun theProbeStopsAtAWrongKeyAndReportsWhenNothingTurnsThinkingOff() {
         reply = { 401 to "{}" }
         val steps = mutableListOf<ByokTranslator.Step>()
