@@ -20,12 +20,43 @@ import org.json.JSONTokener
 // TypeSafe Jev (System One decision model) client and the two questions the pipeline asks it.
 // Pure Kotlin + OkHttp so the Mac harness (tools/mac-e2e) runs the same code.
 
-/** [needsKey] false: no Authorization header is sent (Zen rejects a wrong key with 401 but answers without one). */
+/**
+ * [needsKey] false: no Authorization header is sent (Zen rejects a wrong key with 401 but answers without one).
+ * [CUSTOM]: the user's own address and model ([JevCustom]); its key is optional, sent only when one is saved.
+ */
 enum class JevProvider(val label: String, val url: String, val model: String, val needsKey: Boolean = true, val note: String) {
     // free and keyless, but undocumented: it may get rate limits or a login at any time (tested 2026-10-10)
     ZEN("OpenCode Zen", "https://opencode.ai/zen/v1/systemone", "jev-1.13-free", needsKey = false, note = "免费，不用 key"),
     OFFICIAL("TypeSafe 官方", "https://api.typesafe.ai/v1/systemone", "jev-latest", note = "需要 key"),
     OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1/systemone", "~typesafe/jev-latest", note = "需要 key"),
+    CUSTOM("自定义", "", "", needsKey = false, note = "自己填地址和模型"),
+}
+
+/**
+ * The two APIs that serve Jev. They take the same request and give the same answers for the questions asked here;
+ * only the path differs (OpenRouter Decisions API: choice's confidence is optional).
+ */
+enum class JevProtocol(val label: String, val path: String) {
+    SYSTEMONE("TypeSafe System One", "/v1/systemone"),
+    DECISIONS("OpenRouter Decisions", "/alpha/decisions"),
+}
+
+/** The user's own Jev service, saved as one value so a session never pairs one address with another's model. */
+class JevCustom(val protocol: JevProtocol, val url: String, val model: String) {
+    /**
+     * (error text, null) or (null, the URL requested). An address already ending in /systemone or /decisions is used
+     * as is (a proxy such as CLIProxyAPI serves decisions at …/decisions); otherwise the protocol's path is added.
+     */
+    fun endpoint(): Pair<String?, String?> = ByokTranslator.httpUrl(url) { path ->
+        if (path.endsWith("/systemone") || path.endsWith("/decisions")) path else path + protocol.path
+    }
+    fun encode() = Json.encode(mapOf("protocol" to protocol.name, "url" to url, "model" to model))
+    companion object {
+        fun decode(s: String?): JevCustom? = runCatching {
+            val m = Json.parse(s ?: return null) as Map<*, *>
+            JevCustom(JevProtocol.valueOf(m["protocol"] as String), m["url"] as String, m["model"] as String)
+        }.getOrNull()
+    }
 }
 
 /**
@@ -37,7 +68,9 @@ class JevCall(val request: String, val status: Int, val response: String?, val m
               val limit: JevLimit? = null, val gen: Int = -1) {
     val noul: Double? get() = (answer?.get("noul") as? Number)?.toDouble()
     val choice: String? get() = answer?.get("choice") as? String
+    // the Decisions API may leave confidence out; then the chosen class's probability
     val confidence: Double? get() = (answer?.get("confidence") as? Number)?.toDouble()
+        ?: ((answer?.get("probabilities") as? Map<*, *>)?.get(choice) as? Number)?.toDouble()
 }
 
 /**
@@ -86,6 +119,8 @@ class Jev(
     private val deadlineMs: Long = 2_000,
     /** tests point this at a local server */
     private val url: String = provider.url,
+    /** [JevProvider.CUSTOM]: the user's model */
+    private val model: String = provider.model,
     /** tests: runs after the request is registered for cancel() and before it is executed */
     private val beforeSend: () -> Unit = {},
     /** the session's languages; Japanese→Chinese uses the wording tuned on the test sets */
@@ -97,6 +132,8 @@ class Jev(
     dns: okhttp3.Dns = okhttp3.Dns.SYSTEM,
 ) : Judge {
     private val calls = Calls(deadlineMs, dns)
+    // a custom service may need no key (a local proxy): no header then
+    private val sendsKey = provider.needsKey || (provider == JevProvider.CUSTOM && apiKey.isNotEmpty())
     private val unfinishedQ = unfinishedQuestion(source)
     private val mistranslationQ = mistranslationQuestion(source, target)
     /** the pause is per service and credentials, so a rebuilt setup (new client) does not end it */
@@ -118,11 +155,11 @@ class Jev(
     override fun limitedAfter(gen: Int): Boolean = synchronized(svc) { gen >= 0 && svc.gen > gen }
 
     private fun ask(state: Map<String, String>, question: Map<String, Any>): JevCall {
-        val body = Json.encode(mapOf("model" to provider.model, "state" to state, "questions" to mapOf("x" to question)))
+        val body = Json.encode(mapOf("model" to model, "state" to state, "questions" to mapOf("x" to question)))
         // an illegal header value would make the HTTP library put the key into its exception message
-        if (provider.needsKey && !validKey(apiKey)) return JevCall(body, 0, null, 0, "bad key", null)
+        if (sendsKey && !validKey(apiKey)) return JevCall(body, 0, null, 0, "bad key", null)
         paused()?.let { return JevCall(body, 0, null, 0, "paused", null, it) }
-        val auth = if (provider.needsKey) mapOf("Authorization" to "Bearer $apiKey") else emptyMap()
+        val auth = if (sendsKey) mapOf("Authorization" to "Bearer $apiKey") else emptyMap()
         // let out only when not paused, checked again right before the request is written (after OkHttp's queue and
         // the connection); the generation it went out with tells a later 429 apart
         val sentGen = java.util.concurrent.atomic.AtomicInteger(-1)
@@ -179,8 +216,10 @@ class Jev(
         val usable = answer?.takeIf { a ->
             when (question["type"]) {
                 "noul" -> (a["noul"] as? Number)?.toDouble()?.let { it in 0.0..1.0 } == true
-                "choice" -> (a["choice"] as? String) in ((question["criteria"] as? Map<*, *>)?.keys ?: emptySet<Any>()) &&
-                    (a["confidence"] as? Number)?.toDouble()?.let { it in 0.0..1.0 } == true
+                "choice" -> (a["choice"] as? String).let { c ->
+                    c in ((question["criteria"] as? Map<*, *>)?.keys ?: emptySet<Any>()) &&
+                        ((a["confidence"] ?: (a["probabilities"] as? Map<*, *>)?.get(c)) as? Number)?.toDouble()?.let { it in 0.0..1.0 } == true
+                }
                 else -> true
             }
         }
@@ -192,6 +231,25 @@ class Jev(
     companion object {
         /** Printable ASCII only: a valid bearer token, and nothing the HTTP library would reject (and echo). */
         fun validKey(k: String) = k.isNotEmpty() && k.all { it in '!'..'~' }
+
+        /**
+         * 测试连接 of a custom service: one real question (the sentence-end one), with time to spare. Returns (ok, the
+         * line the settings show). Blocks; call it off the UI thread.
+         */
+        fun test(c: JevCustom, key: String, clock: () -> Long = ::monoMs): Pair<Boolean, String> {
+            val url = c.endpoint().let { (bad, u) -> u ?: return false to (bad ?: "地址格式不对") }
+            if (c.model.isEmpty()) return false to "还没填模型"
+            // [clock]: the session's (SessionHost.clock), as a 429 pauses the service for both
+            val r = Jev(JevProvider.CUSTOM, key, 15_000, url = url, model = c.model, clock = clock).unfinished("今日はいい天気ですね")
+            return when {
+                r.noul != null -> true to "连上了：${r.ms} ms，回答正常"
+                r.error == "bad key" -> false to "key 里有空格、换行或特殊字符，请重新复制"
+                r.error == "paused" -> false to "这个服务刚限过速（HTTP 429），稍后再试"
+                r.status == 0 -> false to "连不上：${r.error}"
+                r.status == 200 -> false to "服务回了 200，但不是 Jev 的回答：${r.response.orEmpty().take(200)}"
+                else -> false to "HTTP ${r.status}：${r.response.orEmpty().take(200)}"
+            }
+        }
         /**
          * One Jev service with its credentials: its pause, its limit generation, and how many 429s are being installed
          * (nothing is let out meanwhile). Guarded by itself.

@@ -29,6 +29,8 @@ class JevTest {
     @Volatile private var extraHeaders = ""
     /** the headers of the last request, names lowercased */
     private val lastHeaders = AtomicReference<Map<String, String>>(emptyMap())
+    /** the path of the last request */
+    private val lastPath = AtomicReference<String?>()
     /** when set, the reply to request number [holdHit] waits on [holdGate] after it is received (truly in flight) */
     @Volatile private var holdHit = -1
     private val holdGate = java.util.concurrent.CountDownLatch(1)
@@ -51,6 +53,7 @@ class JevTest {
                         val body = ByteArray(len).also { var o = 0; while (o < len) o += inp.read(it, o, len - o) }
                         hits.incrementAndGet()
                         lastAuth.set(headers["authorization"]); lastHeaders.set(headers); lastBody.set(String(body))
+                        lastPath.set(head.lineSequence().first().split(' ').getOrNull(1))
                         val n = hits.get()
                         if (n == holdHit) { held.countDown(); holdGate.await() }
                         Thread.sleep(delayMs)
@@ -362,6 +365,62 @@ class JevTest {
         assertNull("no Authorization header for Zen", lastAuth.get())
         assertEquals("jev-1.13-free", (Json.parse(lastBody.get()!!) as Map<*, *>)["model"])
         assertEquals(JevProvider.ZEN, JevProvider.entries.first())
+    }
+
+    @Test
+    fun aCustomServiceGetsTheProtocolPathUnlessItsAddressNamesOne() {
+        fun url(p: JevProtocol, u: String) = JevCustom(p, u, "m").endpoint().second
+        assertEquals("https://api.typesafe.ai/v1/systemone", url(JevProtocol.SYSTEMONE, "https://api.typesafe.ai/"))
+        assertEquals("https://openrouter.ai/api/alpha/decisions", url(JevProtocol.DECISIONS, "https://openrouter.ai/api"))
+        // CLIProxyAPI: systemone under the management path; decisions at …/decisions, not …/alpha/decisions
+        assertEquals("http://127.0.0.1:8317/v0/management/v1/systemone", url(JevProtocol.SYSTEMONE, "http://127.0.0.1:8317/v0/management"))
+        assertEquals("http://127.0.0.1:8317/v0/management/decisions", url(JevProtocol.DECISIONS, "http://127.0.0.1:8317/v0/management/decisions"))
+        // a full address is kept whichever protocol is chosen
+        assertEquals("https://x.dev/api/alpha/decisions", url(JevProtocol.SYSTEMONE, "https://x.dev/api/alpha/decisions/"))
+        assertEquals("地址要以 http:// 或 https:// 开头", JevCustom(JevProtocol.SYSTEMONE, "ftp://x.dev", "m").endpoint().first)
+        assertEquals("还没填地址", JevCustom(JevProtocol.SYSTEMONE, " ", "m").endpoint().first)
+        // saved as one value; anything unreadable is "not saved"
+        val back = JevCustom.decode(JevCustom(JevProtocol.DECISIONS, "http://h/x", "jev-tencent").encode())!!
+        assertEquals(listOf(JevProtocol.DECISIONS, "http://h/x", "jev-tencent"), listOf(back.protocol, back.url, back.model))
+        assertNull(JevCustom.decode("""{"protocol":"SOAP","url":"u","model":"m"}"""))
+        assertNull(JevCustom.decode(null))
+    }
+
+    @Test
+    fun aCustomServiceSendsItsModelAndAKeyOnlyWhenOneIsSaved() {
+        reply = { 200 to """{"answers":{"x":{"type":"noul","noul":0.9}}}""" }
+        val u = "http://127.0.0.1:$port/v0/management/v1/systemone"
+        assertEquals(0.9, Jev(JevProvider.CUSTOM, "", url = u, model = "jev-tencent").unfinished("はい").noul!!, 1e-9)
+        assertNull("no key: no Authorization header", lastAuth.get())
+        assertEquals("jev-tencent", (Json.parse(lastBody.get()!!) as Map<*, *>)["model"])
+        assertEquals("/v0/management/v1/systemone", lastPath.get())
+        Jev(JevProvider.CUSTOM, "mgmt-key", url = u, model = "jev-tencent").unfinished("はい")
+        assertEquals("Bearer mgmt-key", lastAuth.get())
+    }
+
+    @Test
+    fun aDecisionsChoiceWithoutConfidenceUsesItsProbability() {
+        // OpenRouter Decisions API: confidence is optional, probabilities name every class
+        reply = { 200 to """{"answers":{"x":{"type":"choice","choice":"reversal","probabilities":{"ok":0.1,"reversal":0.85}}}}""" }
+        val c = Jev(JevProvider.CUSTOM, "", url = "http://127.0.0.1:$port/api/alpha/decisions", model = "typesafe/jev-1.14").mistranslation("はい", "不是")
+        assertNull(c.error); assertEquals("reversal", c.choice); assertEquals(0.85, c.confidence!!, 1e-9)
+        // neither: not an answer the pipeline can weigh
+        reply = { 200 to """{"answers":{"x":{"type":"choice","choice":"reversal"}}}""" }
+        assertEquals("HTTP 200", Jev(JevProvider.CUSTOM, "", url = "http://127.0.0.1:$port/api/alpha/decisions", model = "m").mistranslation("はい", "不是").error)
+    }
+
+    @Test
+    fun testingACustomServiceSaysWhatCameBack() {
+        val ok = JevCustom(JevProtocol.SYSTEMONE, "http://127.0.0.1:$port/v0/management", "jev-tencent")
+        reply = { 200 to """{"answers":{"x":{"type":"noul","noul":0.2}}}""" }
+        assertTrue(Jev.test(ok, "").let { it.first && it.second.startsWith("连上了") })
+        // the aigc gateway's occasional Spring 404, seen through CLIProxyAPI on 2026-10-21
+        reply = { 404 to """{"timestamp":1792574070150,"status":404,"error":"Not Found","path":"/v1/systemone"}""" }
+        assertEquals(false to """HTTP 404：{"timestamp":1792574070150,"status":404,"error":"Not Found","path":"/v1/systemone"}""", Jev.test(ok, "k"))
+        reply = { 200 to """{"choices":[]}""" }
+        assertTrue(Jev.test(ok, "").second.startsWith("服务回了 200，但不是 Jev 的回答"))
+        assertEquals(false to "还没填模型", Jev.test(JevCustom(JevProtocol.SYSTEMONE, "http://h", ""), ""))
+        assertEquals(false to "地址格式不对", Jev.test(JevCustom(JevProtocol.SYSTEMONE, "http://", "m"), ""))
     }
 
     @Test

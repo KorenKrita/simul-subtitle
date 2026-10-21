@@ -127,6 +127,19 @@ class Prefs(ctx: Context) : SessionPrefs {
 
     /** API key per provider, encrypted with an Android Keystore key (the stored value is useless off this device). */
     override fun jevKey(p: JevProvider): String? = sp.getString("jevKey:${p.name}", null)?.let { runCatching { KeyBox.open(it) }.getOrNull() }
+    /** the 自定义 Jev service, one value (its key is jevKey:CUSTOM) */
+    val jevCustom: JevCustom? get() = JevCustom.decode(sp.getString("jevCustom", null))
+    // one snapshot of both, as saveJevCustom writes them in one edit
+    override fun jevCustomService(): Pair<JevCustom, String>? {
+        val all = sp.all
+        val c = JevCustom.decode(all["jevCustom"] as? String) ?: return null
+        return c to (all["jevKey:${JevProvider.CUSTOM.name}"] as? String)?.let { runCatching { KeyBox.open(it) }.getOrNull() }.orEmpty()
+    }
+    /** The service and its key (null: keep the saved one) in one edit, so a session never pairs one's address with the other's key. */
+    fun saveJevCustom(c: JevCustom, key: String?) = sp.edit().apply {
+        putString("jevCustom", c.encode())
+        if (key != null) putString("jevKey:${JevProvider.CUSTOM.name}", KeyBox.seal(key.trim()))
+    }.apply()
     fun setJevKey(p: JevProvider, key: String?) =
         sp.edit().apply { if (key.isNullOrBlank()) remove("jevKey:${p.name}") else putString("jevKey:${p.name}", KeyBox.seal(key.trim())) }.apply()
 

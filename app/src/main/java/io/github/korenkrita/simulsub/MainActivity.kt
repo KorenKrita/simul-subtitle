@@ -833,6 +833,7 @@ class MainActivity : Activity() {
             jevBox.addView(dropdown(JevProvider.entries.map { "${it.label}（${it.note}）" }, p.ordinal, true) {
                 if (prefs.jevProvider.ordinal != it) { prefs.jevProvider = JevProvider.entries[it]; main.post { renderJev() } }
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            if (p == JevProvider.CUSTOM) { renderJevCustom(jevBox) { renderJev() }; return }
             if (!p.needsKey) {
                 jevBox.addView(hint("不用填 key，打开就能用。这是免费的公共服务，可能随时限速或停用；服务不可用时，字幕照常显示，只是不做辅助。只发送识别出的文字和译文，不发送声音。"))
                 return
@@ -869,6 +870,97 @@ class MainActivity : Activity() {
         jev.setOnCheckedChangeListener { _, on -> prefs.jevOn = on; renderJev() }
         jevCheck.setOnCheckedChangeListener { _, on -> prefs.jevCheck = on; renderJev() }
         renderJev()
+    }
+
+    /** The 自定义 Jev boxes as typed (kept across re-renders), and the last save or test result shown once. */
+    private class JevDraft(var protocol: JevProtocol, var url: String, var model: String, var key: String = "")
+    private var jevDraft: JevDraft? = null
+    private var jevResult: String? = null
+    /** the 测试连接 in flight; a newer one (or a closed screen) drops its answer */
+    @Volatile private var jevTest: Any? = null
+    /** re-renders the 自定义 boxes last put on screen */
+    private var jevRerender: (() -> Unit)? = null
+
+    /** 自定义 Jev: protocol, address, model, an optional key, 保存 and 测试连接 (which saves first). */
+    private fun renderJevCustom(box: LinearLayout, rerender: () -> Unit) {
+        val p = JevProvider.CUSTOM
+        jevRerender = rerender
+        val c = prefs.jevCustom
+        val d = jevDraft ?: JevDraft(c?.protocol ?: JevProtocol.SYSTEMONE, c?.url.orEmpty(), c?.model.orEmpty()).also { jevDraft = it }
+        val testing = jevTest != null
+        box.addView(label("协议"))
+        val resolved = hint("")
+        fun showUrl() {
+            val (bad, u) = JevCustom(d.protocol, d.url, d.model).endpoint()
+            resolved.text = if (u != null) "实际请求地址：$u" else if (d.url.isBlank()) "" else bad
+        }
+        box.addView(dropdown(JevProtocol.entries.map { it.label }, d.protocol.ordinal, !testing, wrap = false) {
+            d.protocol = JevProtocol.entries[it]; showUrl()
+        }.apply { contentDescription = "协议" }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        fun field(title: String, value: String, hintText: String, password: Boolean = false, onChange: (String) -> Unit) =
+            android.widget.EditText(this).apply {
+                box.addView(label(title))
+                setText(value); hint = hintText; isSingleLine = true; textSize = 16f; setTextColor(getColor(R.color.text)); isEnabled = !testing
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    if (password) android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else android.text.InputType.TYPE_TEXT_VARIATION_URI
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(e: android.text.Editable?) = onChange(e.toString())
+                })
+                box.addView(this)
+            }
+        field("服务地址", d.url, "例如 https://openrouter.ai/api") { d.url = it; showUrl() }
+        box.addView(resolved); showUrl()
+        field("模型", d.model, "例如 typesafe/jev-1.14") { d.model = it }
+        val saved = prefs.jevKey(p)
+        field(if (saved != null) "key：已保存（…${saved.takeLast(4)}）" else "key：没填（不需要 key 的服务可以空着）",
+            d.key, if (saved != null) "输入新的 key 来替换" else "在这里粘贴 key", password = true) { d.key = it }
+        val result = hint(if (testing) "正在测试…" else jevResult.orEmpty()).apply { visibility = if (text.isEmpty()) View.GONE else View.VISIBLE }
+        jevResult = null
+        box.addView(result)
+        /** Saves the draft; null (and says why) when it cannot be used. */
+        fun save(): JevCustom? {
+            val n = JevCustom(d.protocol, d.url.trim(), d.model.trim())
+            val k = d.key.trim()
+            val bad = n.endpoint().first ?: if (n.model.isEmpty()) "还没填模型" else if (k.isNotEmpty() && !Jev.validKey(k)) "key 里有空格、换行或特殊字符，请重新复制" else null
+            if (bad != null) { jevResult = bad; rerender(); return null }
+            prefs.saveJevCustom(n, k.ifEmpty { null })
+            d.key = ""
+            return n
+        }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END }
+        row.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+            text = "清除 key"; textSize = 16f; isEnabled = saved != null && !testing
+            setOnClickListener { prefs.setJevKey(p, null); rerender() }
+        })
+        row.addView(MaterialButton(this, null, com.google.android.material.R.attr.borderlessButtonStyle).apply {
+            text = "测试连接"; textSize = 16f; isEnabled = !testing
+            setOnClickListener {
+                val n = save() ?: return@setOnClickListener
+                val token = Any(); jevTest = token
+                val key = prefs.jevKey(p).orEmpty()
+                rerender()
+                Thread {
+                    // the session's clock (CaptionService.clock): a 429 pauses this service for both
+                    val (ok, line) = Jev.test(n, key, android.os.SystemClock::elapsedRealtime)
+                    main.post {
+                        if (jevTest !== token || isDestroyed) return@post
+                        jevTest = null
+                        jevResult = (if (ok) "✓ " else "✗ ") + line
+                        // the page may have been rebuilt meanwhile: the boxes on screen now, not the ones of this tap
+                        jevRerender?.invoke()
+                    }
+                }.apply { isDaemon = true }.start()
+            }
+        })
+        row.addView(MaterialButton(this).apply {
+            text = "保存"; textSize = 16f; isEnabled = !testing
+            setOnClickListener { if (save() != null) { jevResult = "已保存。字幕运行中的话，从下一句开始用。"; rerender() } }
+        })
+        box.addView(row)
+        box.addView(hint("填一个 TypeSafe System One 或 OpenRouter Decisions 接口的 Jev 服务，例如 CLIProxyAPI 之类的本地代理。地址结尾已经是 /systemone 或 /decisions 时原样使用，否则自动加上协议的路径。只发送识别出的文字和译文，不发送声音；用 http:// 地址时 key 是明文传输。key 加密保存在这台手机上，不会写进使用记录。"))
     }
 
     /** The running BYOK test, so a second tap, a new render or leaving the screen does not show a stale result. */

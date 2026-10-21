@@ -26,6 +26,8 @@ interface SessionPrefs {
     val contextSentences: Int
     val jevProvider: JevProvider
     fun jevKey(p: JevProvider): String?
+    /** the saved [JevProvider.CUSTOM] service and its key ("" = none), read together; null before one is saved */
+    fun jevCustomService(): Pair<JevCustom, String>?
     fun byokService(): ByokService?
     fun byokVariant(url: String, model: String): String?
     fun setByokVariant(url: String, model: String, name: String?)
@@ -340,9 +342,10 @@ class CaptionSession(private val host: SessionHost) {
                 // one Jev client for both features; no key = both paused until one is entered
                 // pauses count deep sleep: one kept across sessions ends at the time the service named
                 val judge = s.jevKey?.let {
-                    Jev(s.provider, it, source = s.source, target = s.target, clock = host::clock)
+                    Jev(s.provider, it, url = s.jevUrl!!, model = s.jevModel, source = s.source, target = s.target, clock = host::clock)
                 }
-                if (wantJev && judge == null) notices += "⚠ 在线 Decisions 模型辅助已暂停：还没填 ${s.provider.label} 的 key"
+                if (wantJev && judge == null) notices += "⚠ 在线 Decisions 模型辅助已暂停：" +
+                    if (s.provider == JevProvider.CUSTOM) "自定义服务的地址或模型还没填好" else "还没填 ${s.provider.label} 的 key"
                 return Built(Setup(mt, s.scene, s.source, s.target, judge, s.dedupe, s.contextN, version),
                     notices.joinToString("  ·  "), used, ev)
             }
@@ -372,7 +375,7 @@ class CaptionSession(private val host: SessionHost) {
             inUse = built.byok
             jevEndsOn = jevEnds; jevCheckOn = jevCheck
             // the services really in use (BYOK: the one its probe accepted, not a newly saved one still probed)
-            var mtId = built.byok; var jevId = firstSnap.jevKey?.let { firstSnap.provider.name + "\n" + it }
+            var mtId = built.byok; var jevId = firstSnap.jevId
             first.judge.let { j -> main.post { activeJudge = j; refresh() } }
             // the settings in use are not the ones session_start logged: say so, like a change while running
             logUsed(built, firstSnap, change = firstSnap !== s0)
@@ -431,7 +434,7 @@ class CaptionSession(private val host: SessionHost) {
                     // change or the session end either comes before (this setup is dropped) or after (it rebuilds again)
                     // another translator or Jev service: its light starts unknown (grey), never the old one's. The
                     // switch is queued on the main thread before the new setup can produce any result
-                    val m = b.byok; val j = s.jevKey?.let { s.provider.name + "\n" + it }
+                    val m = b.byok; val j = s.jevId
                     val mtNew = m != mtId; val jevNew = j != jevId
                     val judge = b.setup.judge
                     val activate = Runnable {
@@ -697,11 +700,25 @@ class CaptionSession(private val host: SessionHost) {
         // the BYOK fields from one read; an unfilled profile in settings keeps the service already in use
         val byok = prefs.byokService()?.takeIf { it.model.isNotEmpty() } ?: fallback
         val provider = prefs.jevProvider
-        /** null: no Jev wanted, or its key is missing; "" for a provider without a key */
-        val jevKey = if (!wantJev) null else if (provider.needsKey) prefs.jevKey(provider) else ""
+        // the address and its key from one read
+        private val customService = if (provider == JevProvider.CUSTOM) prefs.jevCustomService() else null
+        private val custom = customService?.first
+        /** null: a custom service without a valid address */
+        val jevUrl = if (provider == JevProvider.CUSTOM) custom?.endpoint()?.second else provider.url
+        val jevModel = custom?.model ?: provider.model
+        /** null: no Jev wanted, or its key (custom: its address or model) is missing; "" when no key is sent */
+        val jevKey = when {
+            !wantJev -> null
+            provider == JevProvider.CUSTOM -> if (jevUrl == null || jevModel.isEmpty()) null else customService?.second
+            provider.needsKey -> prefs.jevKey(provider)
+            else -> ""
+        }
+        /** the Jev service in use: another address, model or key is another service (its light starts grey) */
+        val jevId = jevKey?.let { "${provider.name}\n$jevUrl\n$jevModel\n$it" }
 
         fun log() = mapOf("scene" to scene.label, "source_lang" to (source?.code ?: "auto"), "target_lang" to target.stored,
-            "jev" to jevKey?.let { provider.name }, "jev_model" to jevKey?.let { provider.model },
+            "jev" to jevKey?.let { provider.name }, "jev_model" to jevKey?.let { jevModel },
+            "jev_url" to jevKey?.let { if (provider == JevProvider.CUSTOM) jevUrl else null },
             "dedupe_join" to dedupe, "context_sentences" to contextN,
             "mt_model" to byok?.model, "mt_url" to byok?.url)
     }
@@ -711,7 +728,7 @@ class CaptionSession(private val host: SessionHost) {
          * Settings a running session takes from the next sentence. BYOK changes as one: "保存" writes its fields and
          * then bumps byokSaved, so a half-saved address or model never becomes a setup. jevKey:* is matched apart.
          */
-        private val setupKeys = setOf("scene", "scenes", "contextOn", "contextSentences", "dedupeJoin", "jevProvider",
+        private val setupKeys = setOf("scene", "scenes", "contextOn", "contextSentences", "dedupeJoin", "jevProvider", "jevCustom",
             "sourceLang", "targetLang")
         // Apple silicon: four of the performance cores (M4 Pro: a 7 s recognition 53 -> 44 ms against 2 threads; 6 gave
         // 41 ms), and four threads on a Windows PC too. 8 Gen 3 (1×X4 + 5×A720 + 2×A520): four threads fit on the big

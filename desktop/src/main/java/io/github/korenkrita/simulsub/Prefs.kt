@@ -100,9 +100,28 @@ class Prefs internal constructor(private val file: File) : SessionPrefs {
 
 
     override fun jevKey(p: JevProvider): String? { rev.intValue; return Keychain.get("jevKey:${p.name}") }
+    /** the 自定义 Jev service, one value (its key is jevKey:CUSTOM, in the keychain) */
+    val jevCustom: JevCustom? get() = JevCustom.decode(str("jevCustom"))
+    /** the keychain and the settings file are two stores: the custom service and its key change and are read under it */
+    private val jevLock = Any()
+    override fun jevCustomService(): Pair<JevCustom, String>? = synchronized(jevLock) {
+        val c = JevCustom.decode(str("jevCustom")) ?: return null
+        c to Keychain.get("jevKey:${JevProvider.CUSTOM.name}").orEmpty()
+    }
+    /**
+     * The service and its key (null: keep the saved one) together, so a session never pairs one's address with the
+     * other's key. false when the keychain refused the key; then nothing is saved.
+     */
+    fun saveJevCustom(c: JevCustom, key: String?): Boolean = synchronized(jevLock) {
+        val k = "jevKey:${JevProvider.CUSTOM.name}"
+        if (key != null && !Keychain.set(k, key.trim())) return false
+        put("jevCustom" to c.encode(), k to null)
+        true
+    }
     /** false when the keychain refused it */
-    fun setJevKey(p: JevProvider, key: String?): Boolean =
+    fun setJevKey(p: JevProvider, key: String?): Boolean = synchronized(jevLock) {
         Keychain.set("jevKey:${p.name}", key?.trim()).also { if (it) put("jevKey:${p.name}" to null) }
+    }
 
     /**
      * BYOK: the user's OpenAI-compatible services, saved as [LlmProfile]s; the one in use is byokActive. Each one's

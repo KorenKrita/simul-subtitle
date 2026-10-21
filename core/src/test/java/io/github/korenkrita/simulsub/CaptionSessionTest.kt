@@ -20,6 +20,8 @@ class CaptionSessionTest {
     private val mtCalls = AtomicInteger()
     /** the system prompts of the translation requests, in order */
     private val systems = java.util.concurrent.CopyOnWriteArrayList<String>()
+    /** the Jev requests: "path|authorization|model" */
+    private val jevCalls = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     init {
         Thread {
@@ -35,8 +37,15 @@ class CaptionSessionTest {
                         var o = 0; val body = ByteArray(len)
                         while (o < len) { val n = inp.read(body, o, len - o); if (n < 0) return@use; o += n }
                         val req = Json.parse(String(body)) as? Map<*, *>
-                        ((req?.get("messages") as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("content")?.let { systems += it as String }
-                        mtCalls.incrementAndGet()
+                        val path = head.lineSequence().first().split(' ').getOrNull(1).orEmpty()
+                        if (path.endsWith("/systemone")) {
+                            // Jev: recorded, answered with the same stream (not an answer, so the session goes on without it)
+                            val auth = head.lines().firstOrNull { it.lowercase().startsWith("authorization:") }?.substringAfter(':')?.trim()
+                            jevCalls += "$path|$auth|${req?.get("model")}"
+                        } else {
+                            ((req?.get("messages") as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("content")?.let { systems += it as String }
+                            mtCalls.incrementAndGet()
+                        }
                         val sse = listOf("""{"choices":[{"delta":{"content":"译文"}}]}""",
                             """{"choices":[{"delta":{},"finish_reason":"stop"}]}""").joinToString("") { "data: $it\n\n" } + "data: [DONE]\n\n"
                         sock.getOutputStream().apply {
@@ -55,7 +64,7 @@ class CaptionSessionTest {
 
     private inner class FakePrefs : SessionPrefs {
         override val jevOn = false
-        override val jevCheck = false
+        @Volatile override var jevCheck = false
         override val keepLogs = false
         @Volatile override var keepTranscript = false
         override val keepSentences = CaptionBoard.DEFAULT_SENTENCES
@@ -69,8 +78,10 @@ class CaptionSessionTest {
         override val dedupeJoin = false
         override val contextOn = false
         override val contextSentences = 0
-        override val jevProvider = JevProvider.OFFICIAL
+        @Volatile override var jevProvider = JevProvider.OFFICIAL
         override fun jevKey(p: JevProvider): String? = null
+        @Volatile var custom: Pair<JevCustom, String>? = null
+        override fun jevCustomService() = custom
         override fun byokService() = ByokService("http://127.0.0.1:${server.localPort}/v1/chat/completions", "m-1", "")
         // tested before: no probe
         override fun byokVariant(url: String, model: String): String? = ByokTranslator.NONE_WORKED
@@ -154,7 +165,8 @@ class CaptionSessionTest {
         }
         override fun openAudio(log: SessionLog?) = source ?: audio
         override fun show(lines: List<CaptionLine>, diag: String?, mtLight: ServiceStatus.Light, jevLight: ServiceStatus.Light,
-                          mtReason: String?, jevReason: String?) { this.lines = lines; this.diag = diag }
+                          mtReason: String?, jevReason: String?) { this.lines = lines; this.diag = diag; diag?.let { diags += it } }
+        val diags = java.util.concurrent.CopyOnWriteArrayList<String>()
         override fun ended() = ended.countDown()
         override fun finished() = finished.countDown()
         /** waits for what was posted to the UI thread so far */
@@ -187,6 +199,33 @@ class CaptionSessionTest {
         host.post { CaptionSession(host).start() }
         assertTrue(host.finished.await(20, TimeUnit.SECONDS))
         assertEquals(1L, host.ended.count)
+    }
+
+    @Test
+    fun aCustomJevServiceIsAskedAtItsAddressWithItsModelAndKey() {
+        val audio = ScriptedAudio()
+        val host = FakeHost(FakeAudio(0f, null), source = audio)
+        host.prefs.jevCheck = true; host.prefs.jevProvider = JevProvider.CUSTOM
+        host.prefs.custom = JevCustom(JevProtocol.SYSTEMONE, "http://127.0.0.1:${server.localPort}/proxy", "jev-x") to "k-1"
+        val s = CaptionSession(host)
+        host.post { s.start() }
+        audio.push(false, 512); audio.push(true, 1500); audio.push(false, 2000)
+        val t0 = monoMs()
+        while (jevCalls.isEmpty() && monoMs() - t0 < 10_000) Thread.sleep(20)
+        host.post { s.stop() }
+        assertTrue(host.released.await(10, TimeUnit.SECONDS))
+        assertTrue(jevCalls.toString(), jevCalls.isNotEmpty() && jevCalls.all { it == "/proxy/v1/systemone|Bearer k-1|jev-x" })
+    }
+
+    @Test
+    fun aCustomJevServiceNotFilledInPausesTheJudgeAndSaysWhy() {
+        val host = FakeHost(FakeAudio(1.5f, null))
+        host.prefs.jevCheck = true; host.prefs.jevProvider = JevProvider.CUSTOM
+        host.prefs.custom = JevCustom(JevProtocol.SYSTEMONE, "http://127.0.0.1:${server.localPort}/proxy", "") to ""
+        host.post { CaptionSession(host).start() }
+        assertTrue(host.finished.await(20, TimeUnit.SECONDS))
+        assertTrue(host.diags.toString(), host.diags.any { it.contains("在线 Decisions 模型辅助已暂停：自定义服务的地址或模型还没填好") })
+        assertEquals(emptyList<String>(), jevCalls)
     }
 
     @Test

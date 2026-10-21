@@ -705,12 +705,21 @@ class ByokTranslator(
         fun current(stored: String?) = stored?.takeIf { it == NONE_WORKED || variant(it) != null }
 
         /**
-         * The chat completions URL for what the user typed: http or https (any other scheme is refused), no user info,
-         * query or fragment; a path ending in /v1 (or /v1/chat/completions) is used as is, otherwise /v1 is added. The
-         * scheme the user typed is kept, so a local or LAN endpoint over plain http works, but a key sent over http
-         * travels in clear text. Returns (error text, null) or (null, url).
+         * The chat completions URL for what the user typed (see [httpUrl]): a path ending in /v1 (or
+         * /v1/chat/completions) is used as is, otherwise /v1 is added.
          */
-        fun chatUrl(input: String): Pair<String?, String?> {
+        fun chatUrl(input: String): Pair<String?, String?> = httpUrl(input) { p ->
+            val path = p.removeSuffix("/chat/completions")
+            (if (path.endsWith("/v1")) path else "$path/v1") + "/chat/completions"
+        }
+
+        /**
+         * A URL for what the user typed: http or https (any other scheme is refused), no user info, query or fragment;
+         * [path] turns the typed path (no trailing slash) into the one requested. The scheme the user typed is kept,
+         * so a local or LAN endpoint over plain http works, but a key sent over http travels in clear text. Returns
+         * (error text, null) or (null, url).
+         */
+        fun httpUrl(input: String, path: (String) -> String): Pair<String?, String?> {
             val s = input.trim()
             if (s.isEmpty()) return "还没填地址" to null
             val u = runCatching { java.net.URI(s) }.getOrNull() ?: return "地址格式不对" to null
@@ -719,11 +728,8 @@ class ByokTranslator(
             if (u.host.isNullOrEmpty()) return "地址里没有域名" to null
             if (u.rawUserInfo != null || u.rawQuery != null || u.rawFragment != null) return "地址里不要带用户名、?参数 或 #" to null
             if (u.port == 0 || u.port > 65535) return "端口号不对" to null
-            var path = (u.rawPath ?: "").trimEnd('/')
-            path = path.removeSuffix("/chat/completions")
-            if (!path.endsWith("/v1")) path += "/v1"
             val port = if (u.port > 0) ":${u.port}" else ""
-            val out = "$scheme://${u.host.lowercase()}$port$path/chat/completions"
+            val out = "$scheme://${u.host.lowercase()}$port${path((u.rawPath ?: "").trimEnd('/'))}"
             // what OkHttp will be given: it must accept it too (IPv6 brackets, odd characters, ...)
             if (okhttp3.HttpUrl.Companion.run { out.toHttpUrlOrNull() } == null) return "地址格式不对" to null
             return null to out

@@ -35,6 +35,27 @@
 | **OpenCode Zen**（默认） | 不需要 | 免费公共接口；无需配置即可体验，但随时可能限速或停用 |
 | **TypeSafe 官方** | 需要 | 官方直连计费接口 |
 | **OpenRouter** | 需要 | 通过 OpenRouter 路由调用 `typesafe/jev-1.13`，按账户余额扣费 |
+| **自定义** | 可以不填 | 自己填协议、服务地址和模型，例如 CLIProxyAPI 之类的本地代理；不填 key 时不发送 `Authorization` 头 |
+
+### 自定义服务
+
+1. 在「在线 Decisions 模型辅助」里选「自定义」。
+2. 选协议：
+   - **TypeSafe System One**：路径 `/v1/systemone`，TypeSafe 官方、OpenRouter 和 CLIProxyAPI 都支持。
+   - **OpenRouter Decisions**：路径 `/alpha/decisions`，OpenRouter 的 Decisions API。
+3. 填服务地址。地址结尾已经是 `/systemone` 或 `/decisions` 时原样使用，否则自动加上协议的路径。输入框下面会显示实际请求地址。
+
+   | 服务 | 协议 | 填的地址 |
+   |---|---|---|
+   | TypeSafe 官方 | System One | `https://api.typesafe.ai` |
+   | OpenRouter | Decisions | `https://openrouter.ai/api` |
+   | CLIProxyAPI | System One | `http://127.0.0.1:8317/v0/management` |
+   | CLIProxyAPI | Decisions | `http://127.0.0.1:8317/v0/management/decisions` |
+
+4. 填模型 ID 和 key（不需要 key 的服务留空）。
+5. 点「测试连接」。它先保存，再发一次真实的句尾判断，显示「连上了」或服务返回的状态码和内容。
+
+两种协议的请求和回答格式相同，App 按同一种方式解析。Decisions API 的「检查译文」回答里可以没有 `confidence`，这时取所选类别的概率。
 
 - **数据与隐私**：仅向 Jev 发送本地识别出的**原文文本**与**译文文本**，不发送音频。API Key 在 Android 存入 Keystore、macOS 存入钥匙串、Windows 经 DPAPI 加密，且不写入使用记录。
 - **无感降级**：任何 Jev 请求超时、限流或网络失败，都会自动退回未开启 Jev 时的默认行为（按静音停顿断句、直接保留原译文），不会中断字幕。

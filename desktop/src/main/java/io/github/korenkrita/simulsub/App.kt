@@ -504,7 +504,8 @@ private fun TranslateTab() {
             val p = prefs.jevProvider
             Label("Jev 在线模型服务")
             Dropdown(JevProvider.entries.map { "${it.label}（${it.note}）" }, p.ordinal) { prefs.jevProvider = JevProvider.entries[it] }
-            if (!p.needsKey) Hint("不用填 key，打开就能用。这是免费的公共服务，可能随时限速或停用；服务不可用时，字幕照常显示，只是不做辅助。只发送识别出的文字和译文，不发送声音。")
+            if (p == JevProvider.CUSTOM) JevCustomBox()
+            else if (!p.needsKey) Hint("不用填 key，打开就能用。这是免费的公共服务，可能随时限速或停用；服务不可用时，字幕照常显示，只是不做辅助。只发送识别出的文字和译文，不发送声音。")
             else {
                 val saved = prefs.jevKey(p)
                 Label(if (saved != null) "${p.label} 的 key：已保存（…${saved.takeLast(4)}）" else "${p.label} 的 key：还没填")
@@ -530,6 +531,68 @@ private fun TranslateTab() {
             }
         }
     }
+}
+
+/** The 自定义 Jev boxes as typed; outside the composable so switching tabs keeps them. */
+private class JevDraft {
+    private val c = prefs.jevCustom
+    var protocol by mutableStateOf(c?.protocol ?: JevProtocol.SYSTEMONE)
+    var url by mutableStateOf(c?.url.orEmpty())
+    var model by mutableStateOf(c?.model.orEmpty())
+    var key by mutableStateOf("")
+}
+private val jevDraft = mutableStateOf<JevDraft?>(null)
+/** the 测试连接 in flight (a newer one drops its answer) and the last save or test result */
+private val jevTest = mutableStateOf<Any?>(null)
+private val jevResult = mutableStateOf<String?>(null)
+
+/** 自定义 Jev: protocol, address, model, an optional key, 保存 and 测试连接 (which saves first). */
+@Composable
+private fun JevCustomBox() {
+    val p = JevProvider.CUSTOM
+    val d = jevDraft.value ?: JevDraft().also { jevDraft.value = it }
+    val testing = jevTest.value != null
+    Label("协议")
+    Dropdown(JevProtocol.entries.map { it.label }, d.protocol.ordinal, enabled = !testing) { d.protocol = JevProtocol.entries[it] }
+    Label("服务地址")
+    Field(d.url, { d.url = it; jevResult.value = null }, "例如 https://openrouter.ai/api", enabled = !testing)
+    val (bad, u) = JevCustom(d.protocol, d.url, d.model).endpoint()
+    if (u != null) Hint("实际请求地址：$u") else if (d.url.isNotBlank()) Hint(bad.orEmpty(), C.err)
+    Label("模型")
+    Field(d.model, { d.model = it; jevResult.value = null }, "例如 typesafe/jev-1.14", enabled = !testing)
+    val saved = prefs.jevKey(p)
+    Label(if (saved != null) "key：已保存（…${saved.takeLast(4)}）" else "key：没填（不需要 key 的服务可以空着）")
+    Field(d.key, { d.key = it; jevResult.value = null }, if (saved != null) "输入新的 key 来替换" else "在这里粘贴 key", password = true, enabled = !testing)
+    /** Saves the draft; null (and says why) when it cannot be used. */
+    fun save(): JevCustom? {
+        val n = JevCustom(d.protocol, d.url.trim(), d.model.trim())
+        val k = d.key.trim()
+        val why = n.endpoint().first ?: if (n.model.isEmpty()) "还没填模型" else if (k.isNotEmpty() && !Jev.validKey(k)) "key 里有空格、换行或特殊字符，请重新复制" else null
+        if (why != null) { jevResult.value = "✗ $why"; return null }
+        if (!prefs.saveJevCustom(n, k.ifEmpty { null })) { jevResult.value = "✗ key 没能存进钥匙串，请再试一次"; return null }
+        d.key = ""
+        return n
+    }
+    jevResult.value?.let { Hint(it, if (it.startsWith("✗")) C.err else C.text2) }
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Grow()
+        TextBtn("清除 key", enabled = saved != null && !testing) { if (!prefs.setJevKey(p, null)) jevResult.value = "✗ 没能从钥匙串删掉 key，请再试一次" }
+        Btn("保存", enabled = !testing) { if (save() != null) jevResult.value = "已保存。字幕运行中的话，从下一句开始用。" }
+        Btn(if (testing) "测试中…" else "测试连接", primary = true, enabled = !testing) {
+            val n = save() ?: return@Btn
+            val key = prefs.jevKey(p).orEmpty()
+            val token = Any(); jevTest.value = token; jevResult.value = null
+            Thread {
+                val (ok, line) = Jev.test(n, key)
+                java.awt.EventQueue.invokeLater {
+                    if (jevTest.value !== token) return@invokeLater
+                    jevTest.value = null
+                    jevResult.value = (if (ok) "✓ " else "✗ ") + line
+                }
+            }.apply { isDaemon = true }.start()
+        }
+    }
+    Hint("填一个 TypeSafe System One 或 OpenRouter Decisions 接口的 Jev 服务，例如 CLIProxyAPI 之类的本地代理。地址结尾已经是 /systemone 或 /decisions 时原样使用，否则自动加上协议的路径。只发送识别出的文字和译文，不发送声音；用 http:// 地址时 key 是明文传输。key ${if (isWindows) "加密保存在这台电脑上" else "保存在这台 Mac 的钥匙串里"}，不会写进使用记录。")
 }
 
 /**
