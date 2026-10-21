@@ -733,8 +733,8 @@ private fun Byok(running: Boolean) {
     val chat = ByokTranslator.chatUrl(prefs.byokUrl).second
     val known = chat?.let { prefs.byokVariant(it, prefs.byokModel) }
     Hint(msg ?: when {
-        testing -> "正在依次尝试关闭思考的参数（最多 6 次，每次最多 8 秒，每次都会计费）…"
-        chat == null || prefs.byokModel.isEmpty() -> "填好地址、模型 ID 和 key 后点「测试连接」。第一次使用时会依次试最多 6 种关闭思考的参数（每种是一次计费请求），找到没检测到思考的就记住。"
+        testing -> "正在依次尝试关闭思考的参数（最多 ${ByokTranslator.THINKING_OFF.size} 次，每次最多 8 秒，每次都会计费）…"
+        chat == null || prefs.byokModel.isEmpty() -> "填好地址、模型 ID 和 key 后点「测试连接」。第一次使用时会依次试最多 ${ByokTranslator.THINKING_OFF.size} 种关闭思考的参数（每种是一次计费请求），找到没检测到思考的就记住。"
         known == ByokTranslator.NONE_WORKED -> "⚠ 上次测试：已知的参数都关不掉这个模型的思考，翻译可能很慢。仍然可以使用。"
         known != null -> "上次测试可用（用的参数：${ByokTranslator.variant(known)?.label}，那次没检测到思考）。实际请求地址：$chat"
         else -> "还没测试，第一次开始字幕时会自动测。实际请求地址：$chat"

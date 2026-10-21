@@ -293,6 +293,8 @@ class Segmenter(
         } else {
             inSpeech = false
             preRoll.clear()
+            // that silence is the next utterance's pre-roll, as if it had come before it: no sample is lost
+            if (continueSpeech) preRoll.addAll(tail.takeLast(preRollFrames))
         }
     }
 

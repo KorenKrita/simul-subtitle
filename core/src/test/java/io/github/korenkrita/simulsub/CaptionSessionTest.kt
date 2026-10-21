@@ -176,17 +176,27 @@ class CaptionSessionTest {
         assertTrue(host.diag!!, host.diag!!.startsWith("⚠ 系统声音采集停止了（退出码 1）。点 ✕ 结束后可以重新开始。"))
         assertTrue(host.audio.closed)
         assertEquals(1L, host.finished.count) // the window stays
+        // nothing runs any more: it cannot be paused
+        host.post { s.setPaused(true) }; host.settle()
+        assertFalse(s.paused)
     }
 
     @Test
     fun audioThatEndsWithNothingToSayClosesTheSession() {
         val host = FakeHost(FakeAudio(1.5f, null))
-        host.prefs.keepTranscript = true
         host.post { CaptionSession(host).start() }
         assertTrue(host.finished.await(20, TimeUnit.SECONDS))
         assertEquals(1L, host.ended.count)
+    }
+
+    @Test
+    fun aSessionWithNoSentenceLeavesNoText() {
+        val host = FakeHost(FakeAudio(0f, null)) // no speech at all: no sentence can come
+        host.prefs.keepTranscript = true
+        host.post { CaptionSession(host).start() }
+        assertTrue(host.finished.await(20, TimeUnit.SECONDS))
         assertTrue(host.released.await(5, TimeUnit.SECONDS))
-        assertEquals("a session with no sentence leaves no text", emptyList<File>(), Transcript.list(logs))
+        assertEquals(emptyList<File>(), Transcript.list(logs))
     }
 
     @Test

@@ -181,7 +181,7 @@ class CaptionSession(private val host: SessionHost) {
 
     /** UI thread. */
     fun setPaused(p: Boolean) {
-        if (paused == p) return
+        if (ended || paused == p) return // an ended session has nothing to pause or resume
         if (p) pauses.incrementAndGet()
         paused = p
         refresh()
@@ -498,14 +498,15 @@ class CaptionSession(private val host: SessionHost) {
         } finally {
             // the pipeline workers have exited (or never started), so this is the last event
             log?.let { it.write(mapOf("ev" to "session_end", "overloaded" to overloaded)); it.close() } // failure → onFail
-            transcript?.close(); transcript = null
+            // a failure stays shown on the window an ended session keeps
+            transcript?.let { it.close(); if (it.failed) transcriptFailed = true }; transcript = null
             // Detach the pipeline under the same lock stop uses; the native free happens outside it.
             synchronized(cancelLock) { pipeline = null }
             models?.release()
             host.logInfo("session released")
             // the captions and the reason stay until the user ends them (✕, the menu bar or the home screen)
             // (a stop that came during the drain or the teardown ends it as the user wanted)
-            if (keepOverlay && !stopping) { ended = true; host.ended() }
+            if (keepOverlay && !stopping) { ended = true; paused = false; host.ended() }
             else if (!keepOverlay && !stopping) main.post { if (!stopping) host.finished() }
         }
     }

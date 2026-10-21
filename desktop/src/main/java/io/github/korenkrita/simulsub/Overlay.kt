@@ -250,7 +250,7 @@ private fun Toolbar(o: OverlayState, prefs: Prefs, onLock: () -> Unit, onStop: (
             sw("原文", prefs.showJa) { prefs.showJa = !prefs.showJa }
             sw("用时", prefs.showStats) { prefs.showStats = !prefs.showStats }
             sep()
-            btn(if (CaptionService.pausedState.value) "继续" else "暂停") { CaptionService.togglePause() }
+            if (!CaptionService.endedState.value) btn(if (CaptionService.pausedState.value) "继续" else "暂停") { CaptionService.togglePause() }
             btn("锁定", onClick = onLock)
             btn("✕", Color(0xFFF28B82), onStop)
         }

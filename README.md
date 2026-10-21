@@ -124,7 +124,7 @@
 |---|---|
 | [整体架构](docs/architecture.md) | 音频采集 → VAD → 分句 → 本地识别 → 翻译 → 悬浮窗渲染；三端模块划分与过载保护 |
 | [语音识别（ASR）](docs/asr.md) | ReazonSpeech 离线模型细节，以及与 SenseVoice-Small 的准确率、延迟和内存对比 |
-| [翻译（BYOK）](docs/translation.md) | OpenAI 兼容接口协议、6 种关闭思考参数自动探测、前缀缓存排布、上下文与场景术语表 |
+| [翻译（BYOK）](docs/translation.md) | OpenAI 兼容接口协议、7 种关闭思考参数自动探测、前缀缓存排布、上下文与场景术语表 |
 | [Jev 智能辅助](docs/jev.md) | 可选的 TypeSafe Jev 云端结构化判断：句尾断句判断与译文错译重译、实测耗时与费用 |
 | [隐私说明](docs/privacy.md) | 本地留存与网络发送的数据边界、系统权限用途、三端密钥加密方式 |
 | [使用记录与调试](docs/logs.md) | JSONL 会话日志格式、Android `logcat` 延迟分析字段 |

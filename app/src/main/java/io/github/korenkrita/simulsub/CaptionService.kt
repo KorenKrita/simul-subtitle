@@ -167,7 +167,15 @@ class CaptionService : Service(), SessionHost {
         v.setServices(mtLight, jevLight, mtReason, jevReason)
     }
     // the captions and the message stay on the overlay until the user ends them (✕ or the notification)
-    override fun ended() {}
+    override fun ended() {
+        main.post {
+            if (!running) return@post // stopped meanwhile: no notification to bring back
+            // nothing runs to pause any more: the pause buttons go, the stop ones stay
+            ended = true; paused = false
+            overlay?.setPaused(false); overlay?.setPauseShown(false)
+            getSystemService(NotificationManager::class.java).notify(1, notification())
+        }
+    }
     override fun finished() { stopSelf() }
 
     private fun showOverlay() {
@@ -347,7 +355,7 @@ class CaptionService : Service(), SessionHost {
         // finishes, waits for the pipeline workers and releases everything itself.
         session.stop()
         runCatching { unregisterReceiver(screenOn) }
-        running = false; paused = false
+        running = false; paused = false; ended = false
         projection?.stop()
         projection = null
         prefListener?.let { prefs.unlisten(it) }; prefListener = null
@@ -359,6 +367,7 @@ class CaptionService : Service(), SessionHost {
 
     /** Main thread. */
     private fun togglePause() {
+        if (ended) return
         val p = !session.paused
         session.setPaused(p); paused = p
         overlay?.setPaused(p)
@@ -379,7 +388,7 @@ class CaptionService : Service(), SessionHost {
             .setContentTitle(if (paused) "同传字幕已暂停" else "同传字幕运行中")
             .setContentText(if (paused) "声音不再识别；点「继续」接着出字幕" else "点字幕可调整样式；点这里的「停止」结束")
             .setContentIntent(PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
-            .addAction(Notification.Action.Builder(null, if (paused) "继续" else "暂停", pause).build())
+            .apply { if (!ended) addAction(Notification.Action.Builder(null, if (paused) "继续" else "暂停", pause).build()) }
             .addAction(Notification.Action.Builder(null, "停止", stop).build())
             .setOngoing(true)
             .build()
@@ -403,6 +412,9 @@ class CaptionService : Service(), SessionHost {
             private set
         /** the running session is paused (main thread); false when none runs */
         @Volatile var paused = false
+            private set
+        /** the running session ended by itself (its message still shown): nothing to pause (main thread) */
+        @Volatile var ended = false
             private set
 
         fun start(ctx: Context, code: Int, data: Intent) {

@@ -72,6 +72,8 @@ class CaptionOverlayView(ctx: Context, private val interactive: Boolean) : Linea
     var onTogglePause: () -> Unit = {}
     private var pauseBtn: android.widget.ImageButton? = null
     /** Shows ▶ while paused (tap to go on), ⏸ while running. */
+    /** Hidden once the session ended by itself: there is nothing left to pause. */
+    fun setPauseShown(v: Boolean) { pauseBtn?.visibility = if (v) VISIBLE else GONE }
     fun setPaused(p: Boolean) {
         pauseBtn?.apply {
             setImageResource(if (p) R.drawable.ic_play else R.drawable.ic_pause)

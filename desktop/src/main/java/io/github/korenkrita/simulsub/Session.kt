@@ -104,7 +104,7 @@ class CaptionService private constructor(private val sysaudio: File) : SessionHo
         overlay.mtLight.value = mtLight; overlay.jevLight.value = jevLight
         overlay.mtReason.value = mtReason; overlay.jevReason.value = jevReason
     }
-    override fun ended() = post { if (current === this) endedState.value = true }
+    override fun ended() = post { if (current === this) { endedState.value = true; pausedState.value = false } }
     override fun finished() { if (current === this) stop() }
 
     /** Settings changed in the main window while subtitles run; the look itself is read by the window directly. */
