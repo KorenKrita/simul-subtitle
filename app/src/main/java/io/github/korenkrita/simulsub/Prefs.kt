@@ -111,7 +111,7 @@ class Prefs(ctx: Context) : SessionPrefs {
         get() = sp.getBoolean("keepLogs", false)
         set(v) = sp.edit().putBoolean("keepLogs", v).apply()
     override var keepTranscript: Boolean
-        get() = sp.getBoolean("keepTranscript", true)
+        get() = sp.getBoolean("keepTranscript", false)
         set(v) = sp.edit().putBoolean("keepTranscript", v).apply()
     /** Give the translator the last finished sentences as context (on by default). */
     override var contextOn: Boolean
