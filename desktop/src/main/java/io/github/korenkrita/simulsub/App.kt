@@ -85,7 +85,10 @@ fun app() = application {
     if (isWindows) LaunchedEffect(Unit) { while (true) { delay(5_000); trayDark = taskbarDark() } }
 
     Tray(icon = TrayIcon(running, trayDark), tooltip = "同传字幕", menu = {
-        if (running) Item("停止字幕", onClick = { CaptionService.stop() })
+        if (running) {
+            if (!CaptionService.endedState.value) Item(if (CaptionService.pausedState.value) "继续字幕" else "暂停字幕", onClick = { CaptionService.togglePause() })
+            Item("停止字幕", onClick = { CaptionService.stop() })
+        }
         else Item("开始字幕", onClick = { startError = startCaptions(); if (startError != null) mainOpen = true })
         Item("打开同传字幕", onClick = { mainOpen = true })
         Separator()
@@ -178,6 +181,7 @@ private fun MainScreen(startError: String?, setStartError: (String?) -> Unit) {
 private fun Home(startError: String?, setStartError: (String?) -> Unit, openTranslate: () -> Unit) {
     val running by CaptionService.runningState
     val ended by CaptionService.endedState
+    val paused by CaptionService.pausedState
     Text("把视频、直播里的日语和英语，实时变成字幕", color = C.text2, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp, bottom = 14.dp))
     /** the language name being typed for 其他; null while that editor is closed */
     var typing by remember { mutableStateOf<String?>(null) }
@@ -234,11 +238,15 @@ private fun Home(startError: String?, setStartError: (String?) -> Unit, openTran
         Spacer(Modifier.height(12.dp))
         when {
             running && ended -> Btn("关掉字幕", modifier = Modifier.fillMaxWidth()) { CaptionService.stop() }
-            running -> bigButton(C.errSoft, { CaptionService.stop() }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(12.dp).background(C.err, RoundedCornerShape(2.dp)))
-                    Spacer(Modifier.width(10.dp)); Text("停止字幕", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            running -> {
+                bigButton(C.errSoft, { CaptionService.stop() }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(12.dp).background(C.err, RoundedCornerShape(2.dp)))
+                        Spacer(Modifier.width(10.dp)); Text("停止字幕", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
+                Btn(if (paused) "▶  继续字幕" else "⏸  暂停字幕", modifier = Modifier.fillMaxWidth()) { CaptionService.togglePause() }
             }
             !ready -> bigButton(C.brand, openTranslate) { Text("去填写", color = C.onBrand, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
             else -> bigButton(C.brand, { setStartError(startCaptions()) }) {

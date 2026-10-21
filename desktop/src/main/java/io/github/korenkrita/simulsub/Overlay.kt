@@ -209,7 +209,7 @@ private class Shown(val lines: List<CaptionLine>, val starts: IntArray, val layo
 /** how long new lines take to slide into place */
 private const val SLIDE_MS = 200
 
-/** The toolbar under (or over) the card: 字号 / 背景, 边听边出 · 原文 · 用时 · 🔒 · ✕, and the two service lights. */
+/** The toolbar under (or over) the card: 字号 / 背景, 边听边出 · 原文 · 用时 · 暂停 · 锁定 · ✕, and the two service lights. */
 @Composable
 private fun Toolbar(o: OverlayState, prefs: Prefs, onLock: () -> Unit, onStop: () -> Unit, modifier: Modifier) {
     val dim = Color(0xFF8B8B94)
@@ -250,6 +250,7 @@ private fun Toolbar(o: OverlayState, prefs: Prefs, onLock: () -> Unit, onStop: (
             sw("原文", prefs.showJa) { prefs.showJa = !prefs.showJa }
             sw("用时", prefs.showStats) { prefs.showStats = !prefs.showStats }
             sep()
+            btn(if (CaptionService.pausedState.value) "继续" else "暂停") { CaptionService.togglePause() }
             btn("锁定", onClick = onLock)
             btn("✕", Color(0xFFF28B82), onStop)
         }

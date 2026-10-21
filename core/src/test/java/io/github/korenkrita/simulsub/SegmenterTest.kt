@@ -99,6 +99,18 @@ class SegmenterTest {
         assertEquals(1, jobs.count { it.isFinal })
     }
 
+    @Test
+    fun afterAFlushTheNextUtteranceHasNoAudioFromBefore() {
+        // a pause flushes, drops audio, then goes on: the silence heard before the flush is not the next one's pre-roll
+        val jobs = ArrayList<AsrJob>()
+        val s = Segmenter(jobs::add)
+        feed(listOf(false to 640), s)
+        val before = fed
+        s.flush()
+        feed(listOf(true to 1024, false to 800), s)
+        assertTrue(frameIds(jobs.single { it.isFinal }).none { it <= before })
+    }
+
     private var fed = 0
     private fun feed(pattern: List<Pair<Boolean, Int>>, seg: Segmenter) {
         for ((speech, ms) in pattern) repeat(ms / 32) {

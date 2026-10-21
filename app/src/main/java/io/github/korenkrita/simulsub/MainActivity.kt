@@ -499,7 +499,13 @@ class MainActivity : Activity() {
         secondary.visibility = View.GONE
         primary.isEnabled = true
         if (CaptionService.running) {
-            status(R.color.ok, "字幕正在显示", "回到你要看的视频或直播就行。\n点一下字幕，可以调大小或停止。")
+            val paused = CaptionService.paused
+            if (paused) status(R.color.warn, "字幕已暂停", "声音不再识别，字幕窗口保留。点「继续字幕」接着出字幕。")
+            else status(R.color.ok, "字幕正在显示", "回到你要看的视频或直播就行。\n点一下字幕，可以调大小、暂停或停止。")
+            secondary.visibility = View.VISIBLE
+            secondary.text = if (paused) "继续字幕" else "暂停字幕"
+            secondary.setIconResource(if (paused) R.drawable.ic_play else R.drawable.ic_pause)
+            secondary.setOnClickListener { CaptionService.togglePause(this); main.postDelayed({ render() }, 300) }
             primary.text = "停止字幕"; primary.setIconResource(R.drawable.ic_stop)
             // magpie has no strong red fill: its danger look is red-soft with ink text and a red mark
             primary.backgroundTintList = ColorStateList.valueOf(getColor(R.color.err_soft))

@@ -112,7 +112,9 @@ class CaptionSessionTest {
 
     private inner class FakeHost(val audio: FakeAudio, val asrFails: Boolean = false,
                                  /** a recognition of speech waits for this (not interruptible, as a native call) */
-                                 val asrGate: CountDownLatch? = null) : SessionHost {
+                                 val asrGate: CountDownLatch? = null,
+                                 /** opened instead of [audio] */
+                                 val source: AudioSource? = null) : SessionHost {
         init { hosts += this }
         private val ui = Executors.newSingleThreadScheduledExecutor()
         fun shutdown() = ui.shutdownNow()
@@ -149,7 +151,7 @@ class CaptionSessionTest {
             override fun vadProb(frame: FloatArray) = if (frame.any { kotlin.math.abs(it) > 0.01f }) 0.95f else 0.02f
             override fun release() = released.countDown()
         }
-        override fun openAudio(log: SessionLog?) = audio
+        override fun openAudio(log: SessionLog?) = source ?: audio
         override fun show(lines: List<CaptionLine>, diag: String?, mtLight: ServiceStatus.Light, jevLight: ServiceStatus.Light,
                           mtReason: String?, jevReason: String?) { this.lines = lines; this.diag = diag }
         override fun ended() = ended.countDown()
@@ -250,6 +252,55 @@ class CaptionSessionTest {
         while (host.lines.count { it.isFinal } < 2 && monoMs() - t0 < 20_000) Thread.sleep(20)
         assertEquals(2, host.lines.count { it.isFinal })
         assertTrue(systems.drop(before).isNotEmpty() && systems.drop(before).all { "VTuber" in it })
+        host.post { s.stop() }
+        assertTrue(host.released.await(10, TimeUnit.SECONDS))
+    }
+
+    /** Audio the test hands over frame by frame; a read waits for the next one. */
+    private class ScriptedAudio : AudioSource {
+        private val q = java.util.concurrent.LinkedBlockingQueue<FloatArray>()
+        private val end = FloatArray(0)
+        private var pos = 0L
+        override val estimated = false
+        fun push(tone: Boolean, ms: Int) = repeat(ms / 32) { q.put(FloatArray(512) { i -> if (tone) 0.3f * kotlin.math.sin(i * 0.2f) else 0f }) }
+        /** waits until the session has taken every frame pushed */
+        fun drained() { val t0 = monoMs(); while (q.isNotEmpty() && monoMs() - t0 < 10_000) Thread.sleep(5); Thread.sleep(50) }
+        override fun read(frame: FloatArray): Long {
+            val f = q.take()
+            if (f === end) return -1
+            System.arraycopy(f, 0, frame, 0, frame.size); pos += frame.size
+            return pos * 1000 / 16_000
+        }
+        override fun endReason(): String? = null
+        override fun close() {}
+        override fun cancel() = q.put(end)
+    }
+
+    @Test
+    fun aPauseFinishesTheSentenceDropsTheAudioAndAResumeGoesOn() {
+        val audio = ScriptedAudio()
+        val host = FakeHost(FakeAudio(0f, null), source = audio)
+        val s = CaptionSession(host)
+        host.post { s.start() }
+        fun finals() = host.lines.count { it.isFinal }
+        // half a sentence, then pause: it is finished as it stands, without waiting for its end silence
+        audio.push(false, 512); audio.push(true, 800); audio.drained()
+        host.post { s.setPaused(true) }; host.settle()
+        audio.push(false, 32)
+        val t0 = monoMs()
+        while (finals() < 1 && monoMs() - t0 < 10_000) Thread.sleep(20)
+        assertEquals(1, finals()); assertEquals(1, mtCalls.get())
+        host.settle(); assertTrue(host.diag.toString(), host.diag!!.startsWith("⏸ 已暂停"))
+        // what is said while paused is never heard
+        audio.push(true, 1500); audio.push(false, 2000); audio.drained()
+        Thread.sleep(300)
+        assertEquals(1, finals()); assertEquals(1, mtCalls.get())
+        // resumed: the next sentence comes through as before
+        host.post { s.setPaused(false) }; host.settle()
+        audio.push(false, 512); audio.push(true, 1500); audio.push(false, 2000)
+        while (finals() < 2 && monoMs() - t0 < 20_000) Thread.sleep(20)
+        assertEquals(2, finals()); assertEquals(2, mtCalls.get())
+        host.settle(); assertFalse(host.diag.toString(), host.diag.orEmpty().contains("暂停"))
         host.post { s.stop() }
         assertTrue(host.released.await(10, TimeUnit.SECONDS))
     }

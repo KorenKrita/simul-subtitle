@@ -264,9 +264,10 @@ class Segmenter(
         return if (bestLen >= 2) bestStart + bestLen / 2 + 1 else frames.size
     }
 
-    /** Force-final whatever is pending (stop button). */
+    /** Force-final whatever is pending (stop, pause); what comes after starts afresh, without the audio before. */
     fun flush() {
         if (inSpeech && frames.isNotEmpty()) finalize(frames.size, continueSpeech = false)
+        preRoll.clear()
     }
 
     private fun finalize(count: Int, continueSpeech: Boolean) {

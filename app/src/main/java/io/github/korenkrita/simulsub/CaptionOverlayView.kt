@@ -68,6 +68,16 @@ class CaptionOverlayView(ctx: Context, private val interactive: Boolean) : Linea
     var onResize: (dx: Int, dy: Int, left: Boolean, top: Boolean) -> Unit = { _, _, _, _ -> }
     var onStyleChanged: () -> Unit = {}
     var onStop: () -> Unit = {}
+    /** Pause button tapped: the host flips the session's pause and calls [setPaused]. */
+    var onTogglePause: () -> Unit = {}
+    private var pauseBtn: android.widget.ImageButton? = null
+    /** Shows ▶ while paused (tap to go on), ⏸ while running. */
+    fun setPaused(p: Boolean) {
+        pauseBtn?.apply {
+            setImageResource(if (p) R.drawable.ic_play else R.drawable.ic_pause)
+            contentDescription = if (p) "继续字幕" else "暂停字幕"
+        }
+    }
     /** Mode button tapped: the host flips "only finished sentences" in prefs and calls [setFinalOnly]. */
     var onToggleMode: () -> Unit = {}
     private val modeBtn = TextView(ctx).apply {
@@ -448,6 +458,7 @@ class CaptionOverlayView(ctx: Context, private val interactive: Boolean) : Linea
             jaBtn.layoutParams = cell(); addView(jaBtn)
             statsBtn.layoutParams = cell(); addView(statsBtn)
             addView(sep())
+            addView(btn(R.drawable.ic_pause, "暂停字幕") { onTogglePause() }.also { pauseBtn = it })
             addView(btn(R.drawable.ic_lock, "锁定位置和大小") { toggleLock() })
             addView(btn(R.drawable.ic_close, "停止字幕") { onStop() }.apply { setColorFilter(0xFFF28B82.toInt()) })
         }, full)

@@ -55,6 +55,8 @@ class CaptionService : Service(), SessionHost {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
+        // the home screen's and the notification's 暂停/继续; a service started only for it has nothing to pause
+        if (intent?.action == ACTION_PAUSE) { if (projection != null) togglePause() else stopSelf(); return START_NOT_STICKY }
         if (projection != null) return START_NOT_STICKY
 
         startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
@@ -292,6 +294,7 @@ class CaptionService : Service(), SessionHost {
         v.onStyleChanged = { prefs.setStyle(v.textSp, v.bgAlpha) }
         v.onToolbarShown = { toolbarShown = it; layout() }
         v.onStop = { stopSelf() }
+        v.onTogglePause = { togglePause() }
         v.setFinalOnly(prefs.finalOnly)
         v.onToggleMode = { prefs.finalOnly = !prefs.finalOnly } // the listener below updates the button and captions
         v.setShown(prefs.showJa, prefs.showStats)
@@ -344,7 +347,7 @@ class CaptionService : Service(), SessionHost {
         // finishes, waits for the pipeline workers and releases everything itself.
         session.stop()
         runCatching { unregisterReceiver(screenOn) }
-        running = false
+        running = false; paused = false
         projection?.stop()
         projection = null
         prefListener?.let { prefs.unlisten(it) }; prefListener = null
@@ -354,18 +357,29 @@ class CaptionService : Service(), SessionHost {
         super.onDestroy()
     }
 
+    /** Main thread. */
+    private fun togglePause() {
+        val p = !session.paused
+        session.setPaused(p); paused = p
+        overlay?.setPaused(p)
+        getSystemService(NotificationManager::class.java).notify(1, notification())
+    }
     private fun notification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("cap", "字幕", NotificationManager.IMPORTANCE_LOW))
         val stop = PendingIntent.getService(
             this, 0, Intent(this, CaptionService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
         )
+        val pause = PendingIntent.getService(
+            this, 2, Intent(this, CaptionService::class.java).setAction(ACTION_PAUSE), PendingIntent.FLAG_IMMUTABLE,
+        )
         return Notification.Builder(this, "cap")
             .setSmallIcon(R.drawable.ic_stat_caption)
             .setColor(getColor(R.color.brand))
-            .setContentTitle("同传字幕运行中")
-            .setContentText("点字幕可调整样式；点这里的「停止」结束")
+            .setContentTitle(if (paused) "同传字幕已暂停" else "同传字幕运行中")
+            .setContentText(if (paused) "声音不再识别；点「继续」接着出字幕" else "点字幕可调整样式；点这里的「停止」结束")
             .setContentIntent(PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .addAction(Notification.Action.Builder(null, if (paused) "继续" else "暂停", pause).build())
             .addAction(Notification.Action.Builder(null, "停止", stop).build())
             .setOngoing(true)
             .build()
@@ -379,11 +393,16 @@ class CaptionService : Service(), SessionHost {
 
         const val EXTRA_DATA = "data"
         const val ACTION_STOP = "stop"
+        /** flips the running session's pause */
+        const val ACTION_PAUSE = "pause"
         /** captions never take more than this part of the usable height, so the toolbar always fits */
         const val MAX_CAPTION_FRAC = 0.4f
 
         /** true from start until onDestroy (main thread); the home screen uses it to show 开始/停止. */
         @Volatile var running = false
+            private set
+        /** the running session is paused (main thread); false when none runs */
+        @Volatile var paused = false
             private set
 
         fun start(ctx: Context, code: Int, data: Intent) {
@@ -392,6 +411,9 @@ class CaptionService : Service(), SessionHost {
             )
         }
 
+        fun togglePause(ctx: Context) {
+            if (running) ctx.startService(Intent(ctx, CaptionService::class.java).setAction(ACTION_PAUSE))
+        }
         fun stop(ctx: Context) {
             ctx.startService(Intent(ctx, CaptionService::class.java).setAction(ACTION_STOP))
         }
